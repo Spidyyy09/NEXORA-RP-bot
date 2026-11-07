@@ -1,0 +1,1489 @@
+const {
+  Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder, ChannelType,
+  PermissionFlagsBits, EmbedBuilder, ActionRowBuilder, ButtonBuilder,
+  ButtonStyle, ActivityType, StringSelectMenuBuilder, Partials, AttachmentBuilder
+} = require('discord.js');
+const Database = require('better-sqlite3');
+const path = require('node:path');
+
+const TOKEN = process.env.DISCORD_TOKEN;
+const CLIENT_ID = process.env.CLIENT_ID;
+// Trusted bot owner configured by the user.
+const TRUSTED_OWNER_ID = '1312960418288898062';
+
+if (!TOKEN || !CLIENT_ID) {
+  console.error('Missing DISCORD_TOKEN or CLIENT_ID.');
+  process.exit(1);
+}
+const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers, GatewayIntentBits.GuildInvites, GatewayIntentBits.GuildMessages, GatewayIntentBits.GuildMessageReactions, GatewayIntentBits.MessageContent], partials: [Partials.Message, Partials.Channel, Partials.Reaction] });
+const db = new Database('nexora-rp.sqlite');
+db.exec(`CREATE TABLE IF NOT EXISTS chilly_config (guild TEXT NOT NULL, key TEXT NOT NULL, value TEXT, PRIMARY KEY(guild,key))`);
+db.exec(`CREATE TABLE IF NOT EXISTS ticket_buttons (guild TEXT NOT NULL, ticket_key TEXT NOT NULL, label TEXT NOT NULL, emoji TEXT, staff_role TEXT NOT NULL, log_channel TEXT NOT NULL, PRIMARY KEY(guild,ticket_key))`);
+// Preserve the legacy single-button ticket setup for existing servers and panels.
+db.exec(`INSERT OR IGNORE INTO ticket_buttons(guild,ticket_key,label,emoji,staff_role,log_channel) SELECT c.guild,'default','Create Ticket','🎫',r.value,c.value FROM chilly_config c JOIN chilly_config r ON r.guild=c.guild AND r.key='ticket_role' WHERE c.key='ticket_channel'`);
+db.exec(`CREATE TABLE IF NOT EXISTS leveling_xp (guild TEXT NOT NULL, user TEXT NOT NULL, xp INTEGER NOT NULL DEFAULT 0, last_message INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(guild,user))`);
+db.exec(`CREATE TABLE IF NOT EXISTS leveling_rewards (guild TEXT NOT NULL, level INTEGER NOT NULL, role TEXT NOT NULL, PRIMARY KEY(guild,level))`);
+db.exec(`CREATE TABLE IF NOT EXISTS whitelist (guild TEXT NOT NULL, kind TEXT NOT NULL, target TEXT NOT NULL, added_by TEXT, created INTEGER, PRIMARY KEY (guild, kind, target))`);
+db.exec(`CREATE TABLE IF NOT EXISTS fictional_members (guild TEXT NOT NULL, name TEXT NOT NULL, created INTEGER DEFAULT (strftime('%s','now')), PRIMARY KEY(guild,name))`);
+db.exec(`
+CREATE TABLE IF NOT EXISTS users (
+ guild TEXT, user TEXT, coins INTEGER DEFAULT 0,
+ daily INTEGER DEFAULT 0, worked INTEGER DEFAULT 0,
+ PRIMARY KEY(guild,user)
+);
+CREATE TABLE IF NOT EXISTS warnings (
+ id INTEGER PRIMARY KEY AUTOINCREMENT,
+ guild TEXT, user TEXT, moderator TEXT, reason TEXT, created INTEGER
+);
+CREATE TABLE IF NOT EXISTS inventory (
+ guild TEXT, user TEXT, item TEXT, quantity INTEGER DEFAULT 0,
+ PRIMARY KEY(guild,user,item)
+);
+CREATE TABLE IF NOT EXISTS giveaways (
+ id TEXT PRIMARY KEY, guild TEXT, channel TEXT, message TEXT,
+ prize TEXT, winners INTEGER, ends INTEGER, ended INTEGER DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS entries (
+ giveaway TEXT, user TEXT, PRIMARY KEY(giveaway,user)
+);
+CREATE TABLE IF NOT EXISTS autoreactions (guild TEXT NOT NULL, trigger TEXT NOT NULL, emoji TEXT NOT NULL, PRIMARY KEY(guild,trigger));
+CREATE TABLE IF NOT EXISTS reaction_roles (
+ guild TEXT NOT NULL, channel TEXT NOT NULL, message TEXT NOT NULL, emoji_key TEXT NOT NULL, emoji_input TEXT NOT NULL, role TEXT NOT NULL, PRIMARY KEY(guild,message,emoji_key)
+);
+CREATE TABLE IF NOT EXISTS invite_counts (guild TEXT, user TEXT, invites INTEGER DEFAULT 0, PRIMARY KEY(guild,user));
+CREATE TABLE IF NOT EXISTS guild_settings (
+ guild TEXT PRIMARY KEY, log_channel TEXT, antinuke INTEGER DEFAULT 0, antiraid INTEGER DEFAULT 0, antilink INTEGER DEFAULT 0, antispam INTEGER DEFAULT 0, antiabuse INTEGER DEFAULT 0
+);
+`);
+// Global OWO-style economy: one wallet and inventory per Discord user across every server.
+db.exec(`
+CREATE TABLE IF NOT EXISTS global_users (
+ user TEXT PRIMARY KEY, coins INTEGER NOT NULL DEFAULT 0,
+ daily INTEGER NOT NULL DEFAULT 0, worked INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS global_inventory (
+ user TEXT NOT NULL, item TEXT NOT NULL, quantity INTEGER NOT NULL DEFAULT 0,
+ PRIMARY KEY(user,item)
+);
+`);
+// Import existing server-specific balances/items once. Coins and item quantities are summed;
+// cooldown timestamps use MAX so switching servers cannot bypass a cooldown.
+if (!db.prepare("SELECT 1 FROM chilly_config WHERE guild='__global_economy__' AND key='migration_v1'").get()) {
+ db.transaction(() => {
+  db.prepare(`INSERT INTO global_users(user,coins,daily,worked)
+   SELECT user, SUM(COALESCE(coins,0)), MAX(COALESCE(daily,0)), MAX(COALESCE(worked,0))
+   FROM users WHERE user IS NOT NULL GROUP BY user
+   ON CONFLICT(user) DO NOTHING`).run();
+  db.prepare(`INSERT INTO global_inventory(user,item,quantity)
+   SELECT user,item,SUM(COALESCE(quantity,0)) FROM inventory
+   WHERE user IS NOT NULL AND item IS NOT NULL GROUP BY user,item
+   ON CONFLICT(user,item) DO NOTHING`).run();
+  db.prepare("INSERT INTO chilly_config(guild,key,value) VALUES('__global_economy__','migration_v1','done')").run();
+ })();
+}
+
+
+// Migration for older SQLite databases. Keep existing rows; add columns only when missing.
+function ensureColumn(table, column, definition) {
+  const columns = db.prepare(`PRAGMA table_info(${table})`).all();
+  if (!columns.some(col => col.name === column)) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+  }
+}
+ensureColumn('users', 'guild', 'TEXT');
+ensureColumn('users', 'user', 'TEXT');
+ensureColumn('users', 'coins', 'INTEGER DEFAULT 0');
+ensureColumn('users', 'daily', 'INTEGER DEFAULT 0');
+ensureColumn('users', 'worked', 'INTEGER DEFAULT 0');
+ensureColumn('warnings', 'guild', 'TEXT');
+ensureColumn('warnings', 'user', 'TEXT');
+ensureColumn('warnings', 'moderator', 'TEXT');
+ensureColumn('warnings', 'reason', 'TEXT');
+ensureColumn('warnings', 'created', 'INTEGER');
+ensureColumn('inventory', 'guild', 'TEXT');
+ensureColumn('inventory', 'user', 'TEXT');
+ensureColumn('inventory', 'item', 'TEXT');
+ensureColumn('inventory', 'quantity', 'INTEGER DEFAULT 0');
+ensureColumn('giveaways', 'guild', 'TEXT');
+ensureColumn('giveaways', 'channel', 'TEXT');
+ensureColumn('giveaways', 'message', 'TEXT');
+ensureColumn('giveaways', 'prize', 'TEXT');
+ensureColumn('giveaways', 'winners', 'INTEGER');
+ensureColumn('giveaways', 'ends', 'INTEGER');
+ensureColumn('giveaways', 'ended', 'INTEGER DEFAULT 0');
+ensureColumn('entries', 'giveaway', 'TEXT');
+ensureColumn('entries', 'user', 'TEXT');
+
+const commands = [
+ new SlashCommandBuilder().setName('ticket-setup').setDescription('Configure custom ticket buttons and panels')
+  .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+  .addSubcommand(sub=>sub.setName('add-button').setDescription('Add a custom ticket button')
+   .addStringOption(o=>o.setName('key').setDescription('Unique short key, e.g. support').setMaxLength(30).setRequired(true))
+   .addStringOption(o=>o.setName('name').setDescription('Text shown on the ticket button').setMaxLength(80).setRequired(true))
+   .addRoleOption(o=>o.setName('staff-role').setDescription('Staff role for this ticket type').setRequired(true))
+   .addChannelOption(o=>o.setName('log-channel').setDescription('Log channel for this ticket type').addChannelTypes(ChannelType.GuildText).setRequired(true))
+   .addStringOption(o=>o.setName('emoji').setDescription('Optional button emoji').setMaxLength(100).setRequired(false)))
+  .addSubcommand(sub=>sub.setName('remove-button').setDescription('Remove a ticket button')
+   .addStringOption(o=>o.setName('key').setDescription('Button key to remove').setMaxLength(30).setRequired(true)))
+  .addSubcommand(sub=>sub.setName('list-buttons').setDescription('List configured ticket buttons'))
+  .addSubcommand(sub=>sub.setName('panel').setDescription('Post a panel with all configured ticket buttons')
+   .addChannelOption(o=>o.setName('channel').setDescription('Panel channel').addChannelTypes(ChannelType.GuildText).setRequired(true))
+   .addStringOption(o=>o.setName('title').setDescription('Panel title').setMaxLength(200).setRequired(true))
+   .addStringOption(o=>o.setName('description').setDescription('Panel description').setMaxLength(1000).setRequired(true))),
+ new SlashCommandBuilder().setName('welcome-setup').setDescription('Configure welcome messages for this server')
+  .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+  .addChannelOption(o=>o.setName('channel').setDescription('Welcome channel').addChannelTypes(ChannelType.GuildText).setRequired(true))
+  .addStringOption(o=>o.setName('message').setDescription('Use {user} and {server} placeholders').setMaxLength(1000).setRequired(true)),
+ new SlashCommandBuilder().setName('jail-setup').setDescription('Set the jail role for this server')
+  .setDefaultMemberPermissions(PermissionFlagsBits.ManageRoles)
+  .addRoleOption(o=>o.setName('role').setDescription('Jail role').setRequired(true)),
+ new SlashCommandBuilder().setName('jail').setDescription('Jail a member')
+  .setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers)
+  .addUserOption(o=>o.setName('user').setDescription('Member to jail').setRequired(true))
+  .addStringOption(o=>o.setName('reason').setDescription('Reason')),
+ new SlashCommandBuilder().setName('unjail').setDescription('Release a jailed member')
+  .setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers)
+  .addUserOption(o=>o.setName('user').setDescription('Member to release').setRequired(true)),
+ new SlashCommandBuilder().setName('play').setDescription('Play audio from a YouTube URL')
+  .addStringOption(o=>o.setName('url').setDescription('YouTube video URL').setRequired(true)),
+ ...['skip','pause','resume','stop','queue','leave'].map(n=>new SlashCommandBuilder().setName(n).setDescription(({skip:'Skip current track',pause:'Pause music',resume:'Resume music',stop:'Stop music and clear queue',queue:'Show music queue',leave:'Leave voice channel'})[n])),
+ new SlashCommandBuilder().setName('ping').setDescription('Check bot latency'),
+ new SlashCommandBuilder().setName('help').setDescription('Show all commands'),
+ new SlashCommandBuilder().setName('say').setDescription('Send a message in this channel or an optional selected channel')
+  .addStringOption(o=>o.setName('message').setDescription('Message to send').setMaxLength(2000).setRequired(true))
+  .addChannelOption(o=>o.setName('channel').setDescription('Optional destination channel').addChannelTypes(ChannelType.GuildText).setRequired(false))
+ ,
+ new SlashCommandBuilder().setName('announce').setDescription('Send an announcement to a selected text or announcement channel')
+  .addStringOption(o=>o.setName('message').setDescription('Announcement message').setMaxLength(2000).setRequired(true))
+  .addChannelOption(o=>o.setName('channel').setDescription('Choose any text or announcement channel').addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement).setRequired(true)),
+ new SlashCommandBuilder().setName('whitelist').setDescription('Manage security whitelist entries')
+  .addSubcommand(sub=>sub.setName('add_user').setDescription('Add user to whitelist')
+   .addUserOption(o=>o.setName('user').setDescription('User to whitelist').setRequired(true)))
+  .addSubcommand(sub=>sub.setName('add_channel').setDescription('Add channel to whitelist')
+   .addChannelOption(o=>o.setName('channel').setDescription('Channel to whitelist').addChannelTypes(ChannelType.GuildText,ChannelType.GuildAnnouncement).setRequired(true)))
+  .addSubcommand(sub=>sub.setName('add_role').setDescription('Add role to whitelist')
+   .addRoleOption(o=>o.setName('role').setDescription('Role to whitelist').setRequired(true)))
+  .addSubcommand(sub=>sub.setName('remove_channel').setDescription('Remove channel from whitelist')
+   .addChannelOption(o=>o.setName('channel').setDescription('Channel to remove').addChannelTypes(ChannelType.GuildText,ChannelType.GuildAnnouncement).setRequired(true)))
+  .addSubcommand(sub=>sub.setName('remove_role').setDescription('Remove role from whitelist')
+   .addRoleOption(o=>o.setName('role').setDescription('Role to remove').setRequired(true)))
+  .addSubcommand(sub=>sub.setName('remove_user').setDescription('Remove user from whitelist')
+   .addUserOption(o=>o.setName('user').setDescription('User to remove').setRequired(true)))
+  .addSubcommand(sub=>sub.setName('view_channels').setDescription('Show whitelisted channels'))
+  .addSubcommand(sub=>sub.setName('view_roles').setDescription('Show whitelisted roles'))
+  .addSubcommand(sub=>sub.setName('view_users').setDescription('Show whitelisted users')),
+ new SlashCommandBuilder().setName('money').setDescription('Add coins to a member (server owner only)')
+  .addUserOption(o=>o.setName('user').setDescription('Member receiving coins').setRequired(true))
+  .addIntegerOption(o=>o.setName('amount').setDescription('Coins to add').setMinValue(1).setMaxValue(1000000000).setRequired(true)),
+ new SlashCommandBuilder().setName('balance').setDescription('Check coin balance')
+  .addUserOption(o=>o.setName('user').setDescription('Member')),
+ new SlashCommandBuilder().setName('daily').setDescription('Claim daily coins'),
+ new SlashCommandBuilder().setName('work').setDescription('Earn coins by working'),
+ new SlashCommandBuilder().setName('slots').setDescription('Bet Chilly Coins on the slot machine')
+  .addIntegerOption(o=>o.setName('bet').setDescription('Coins to bet').setMinValue(1).setMaxValue(1000000).setRequired(true)),
+ new SlashCommandBuilder().setName('invites').setDescription('Check your tracked invites')
+  .addUserOption(o=>o.setName('user').setDescription('Member to check')),
+ new SlashCommandBuilder().setName('invites-leaderboard').setDescription('Top inviters in this server'),
+ new SlashCommandBuilder().setName('pay').setDescription('Pay Chilly Coins to a member')
+  .addUserOption(o=>o.setName('user').setDescription('Recipient').setRequired(true))
+  .addIntegerOption(o=>o.setName('amount').setDescription('Amount').setMinValue(1).setRequired(true)),
+ new SlashCommandBuilder().setName('leaderboard').setDescription('Richest members'),
+ new SlashCommandBuilder().setName('shop').setDescription('View the coin shop'),
+ new SlashCommandBuilder().setName('buy').setDescription('Buy an item')
+  .addStringOption(o=>o.setName('item').setDescription('Item').setRequired(true)
+   .addChoices(
+    {name:'Cookie - 100 coins',value:'Cookie'},
+    {name:'Coffee - 250 coins',value:'Coffee'},
+    {name:'Golden Crown - 1000 coins',value:'Golden Crown'}
+   )),
+ new SlashCommandBuilder().setName('inventory').setDescription('View inventory')
+  .addUserOption(o=>o.setName('user').setDescription('Member')),
+ new SlashCommandBuilder().setName('warn').setDescription('Warn a member')
+  .setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers)
+  .addUserOption(o=>o.setName('user').setDescription('Member').setRequired(true))
+  .addStringOption(o=>o.setName('reason').setDescription('Reason').setRequired(true)),
+ new SlashCommandBuilder().setName('warnings').setDescription('View member warnings')
+  .setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers)
+  .addUserOption(o=>o.setName('user').setDescription('Member').setRequired(true)),
+ new SlashCommandBuilder().setName('clear').setDescription('Delete recent messages')
+  .setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages)
+  .addIntegerOption(o=>o.setName('amount').setDescription('1 to 100').setMinValue(1).setMaxValue(100).setRequired(true)),
+ new SlashCommandBuilder().setName('timeout').setDescription('Timeout a member')
+  .setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers)
+  .addUserOption(o=>o.setName('user').setDescription('Member').setRequired(true))
+  .addIntegerOption(o=>o.setName('minutes').setDescription('Minutes').setMinValue(1).setMaxValue(40320).setRequired(true))
+  .addStringOption(o=>o.setName('reason').setDescription('Reason')),
+ new SlashCommandBuilder().setName('untimeout').setDescription('Remove timeout')
+  .setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers)
+  .addUserOption(o=>o.setName('user').setDescription('Member').setRequired(true)),
+ new SlashCommandBuilder().setName('kick').setDescription('Kick a member')
+  .setDefaultMemberPermissions(PermissionFlagsBits.KickMembers)
+  .addUserOption(o=>o.setName('user').setDescription('Member').setRequired(true))
+  .addStringOption(o=>o.setName('reason').setDescription('Reason')),
+ new SlashCommandBuilder().setName('ban').setDescription('Ban a member')
+  .setDefaultMemberPermissions(PermissionFlagsBits.BanMembers)
+  .addUserOption(o=>o.setName('user').setDescription('Member').setRequired(true))
+  .addStringOption(o=>o.setName('reason').setDescription('Reason')),
+ new SlashCommandBuilder().setName('unban').setDescription('Unban by user ID')
+  .setDefaultMemberPermissions(PermissionFlagsBits.BanMembers)
+  .addStringOption(o=>o.setName('userid').setDescription('User ID').setRequired(true)),
+ new SlashCommandBuilder().setName('8ball').setDescription('Ask the magic 8-ball')
+  .addStringOption(o=>o.setName('question').setDescription('Question').setRequired(true)),
+ new SlashCommandBuilder().setName('coinflip').setDescription('Flip a coin'),
+ new SlashCommandBuilder().setName('dice').setDescription('Roll a dice'),
+ new SlashCommandBuilder().setName('rps').setDescription('Challenge a real member to RPS for Chilly Coins')
+  .addUserOption(o=>o.setName('opponent').setDescription('Member to challenge').setRequired(true))
+  .addIntegerOption(o=>o.setName('bet').setDescription('Coins each player bets').setMinValue(1).setMaxValue(1000000).setRequired(true)),
+ new SlashCommandBuilder().setName('joke').setDescription('Get a clean joke'),
+ new SlashCommandBuilder().setName('ship').setDescription('Compatibility score')
+  .addUserOption(o=>o.setName('user1').setDescription('First member').setRequired(true))
+  .addUserOption(o=>o.setName('user2').setDescription('Second member').setRequired(true)),
+ new SlashCommandBuilder().setName('avatar').setDescription('Show avatar')
+  .addUserOption(o=>o.setName('user').setDescription('Member')),
+ new SlashCommandBuilder().setName('userinfo').setDescription('Show user information')
+  .addUserOption(o=>o.setName('user').setDescription('Member')),
+ new SlashCommandBuilder().setName('serverinfo').setDescription('Show server information'),
+ new SlashCommandBuilder().setName('servericon').setDescription('Download a server icon using its invite link')
+  .addStringOption(o=>o.setName('invite').setDescription('Discord server invite link').setRequired(true)),
+ new SlashCommandBuilder().setName('server-copy').setDescription('Copy roles, permissions, categories and channels from another server')
+  .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+  .addStringOption(o=>o.setName('source-server-id').setDescription('Server ID of the source server (Chilly must be in it)').setMinLength(17).setMaxLength(20).setRequired(true)),
+ new SlashCommandBuilder().setName('poll').setDescription('Create yes/no poll')
+  .addStringOption(o=>o.setName('question').setDescription('Question').setRequired(true)),
+ new SlashCommandBuilder().setName('calculator').setDescription('Calculate two numbers')
+  .addNumberOption(o=>o.setName('a').setDescription('First number').setRequired(true))
+  .addStringOption(o=>o.setName('operator').setDescription('Operation').setRequired(true)
+   .addChoices({name:'Add',value:'+'},{name:'Subtract',value:'-'},{name:'Multiply',value:'*'},{name:'Divide',value:'/'}))
+  .addNumberOption(o=>o.setName('b').setDescription('Second number').setRequired(true)),
+ new SlashCommandBuilder().setName('remind').setDescription('Set a reminder')
+  .addIntegerOption(o=>o.setName('seconds').setDescription('10 to 86400 seconds').setMinValue(10).setMaxValue(86400).setRequired(true))
+  .addStringOption(o=>o.setName('message').setDescription('Reminder').setRequired(true)),
+ new SlashCommandBuilder().setName('gstart').setDescription('Start a giveaway')
+  .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+  .addStringOption(o=>o.setName('prize').setDescription('Prize').setRequired(true))
+  .addStringOption(o=>o.setName('duration').setDescription('Duration, e.g. 1m, 1h, 1d').setMaxLength(10).setRequired(true))
+  .addIntegerOption(o=>o.setName('winners').setDescription('Winner count').setMinValue(1).setMaxValue(20).setRequired(true)),
+ new SlashCommandBuilder().setName('gend').setDescription('End giveaway early')
+  .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+  .addStringOption(o=>o.setName('id').setDescription('Giveaway ID').setRequired(true)),
+ new SlashCommandBuilder().setName('greroll').setDescription('Pick new winners')
+  .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+  .addStringOption(o=>o.setName('id').setDescription('Giveaway ID').setRequired(true)),
+ new SlashCommandBuilder().setName('steal').setDescription('Add an emoji or sticker from a replied message to this server')
+  .setDefaultMemberPermissions(PermissionFlagsBits.ManageEmojisAndStickers)
+  .addStringOption(o=>o.setName('message_id').setDescription('ID of the message containing the emoji or sticker').setRequired(true)),
+ new SlashCommandBuilder().setName('reaction-role').setDescription('Give a role when members react to a message')
+  .setDefaultMemberPermissions(PermissionFlagsBits.ManageRoles)
+  .addStringOption(o=>o.setName('message_id').setDescription('ID of the embed/message to add the reaction to').setRequired(true))
+  .addStringOption(o=>o.setName('emoji').setDescription('Unicode emoji or custom emoji from this server').setRequired(true))
+  .addRoleOption(o=>o.setName('role').setDescription('Role to give/remove when reacting').setRequired(true)),
+ new SlashCommandBuilder().setName('autoreact').setDescription('Manage automatic message reactions')
+  .addSubcommand(sub=>sub.setName('add').setDescription('Add an automatic reaction for a trigger')
+   .addStringOption(o=>o.setName('trigger').setDescription('Exact word or phrase to match').setMaxLength(100).setRequired(true))
+   .addStringOption(o=>o.setName('emoji').setDescription('Emoji to react with').setRequired(true)))
+  .addSubcommand(sub=>sub.setName('remove').setDescription('Remove an automatic reaction')
+   .addStringOption(o=>o.setName('trigger').setDescription('Trigger to remove').setMaxLength(100).setRequired(true)))
+  .addSubcommand(sub=>sub.setName('list').setDescription('List automatic reactions'))
+  .addSubcommand(sub=>sub.setName('reset').setDescription('Remove all automatic reactions')),
+ new SlashCommandBuilder().setName('auto-role').setDescription('Set the role automatically given to new members')
+  .setDefaultMemberPermissions(PermissionFlagsBits.ManageRoles)
+  .addRoleOption(o=>o.setName('role').setDescription('Role to give new members').setRequired(true)),
+ new SlashCommandBuilder().setName('role-all').setDescription('Give a role to all existing humans or bots')
+  .setDefaultMemberPermissions(PermissionFlagsBits.ManageRoles)
+  .addRoleOption(o=>o.setName('role').setDescription('Role to assign').setRequired(true))
+  .addStringOption(o=>o.setName('type').setDescription('Choose which members receive the role').setRequired(true)
+   .addChoices({name:'Bot only',value:'bot'},{name:'Human only',value:'human'})),
+ new SlashCommandBuilder().setName('role-colour').setDescription('Change a role colour using a colour name or hex code')
+  .setDefaultMemberPermissions(PermissionFlagsBits.ManageRoles)
+  .addRoleOption(o=>o.setName('role').setDescription('Role whose colour should change').setRequired(true))
+  .addStringOption(o=>o.setName('colour').setDescription('Colour name (Red, Blue, etc.) or hex code (#FF0000)').setRequired(true)),
+ new SlashCommandBuilder().setName('setlogs').setDescription('Set moderation and server log channel')
+  .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+  .addChannelOption(o=>o.setName('channel').setDescription('Log channel').addChannelTypes(ChannelType.GuildText).setRequired(true)),
+ new SlashCommandBuilder().setName('levelup-setup').setDescription('Configure level-up announcements for this server')
+  .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+  .addChannelOption(o=>o.setName('channel').setDescription('Announcement channel (omit to use the current channel; use off to disable via message option)').addChannelTypes(ChannelType.GuildText).setRequired(false))
+  .addStringOption(o=>o.setName('message').setDescription('Message tags: {user}, {level}, {xp}').setMaxLength(1000).setRequired(false)),
+ new SlashCommandBuilder().setName('levelrole').setDescription('Configure level-based role rewards')
+  .setDefaultMemberPermissions(PermissionFlagsBits.ManageRoles)
+  .addSubcommand(sub=>sub.setName('add').setDescription('Give a role at a specific level')
+   .addIntegerOption(o=>o.setName('level').setDescription('Required level').setMinValue(1).setMaxValue(1000).setRequired(true))
+   .addRoleOption(o=>o.setName('role').setDescription('Reward role').setRequired(true)))
+  .addSubcommand(sub=>sub.setName('remove').setDescription('Remove a level reward')
+   .addIntegerOption(o=>o.setName('level').setDescription('Level reward to remove').setMinValue(1).setMaxValue(1000).setRequired(true)))
+  .addSubcommand(sub=>sub.setName('list').setDescription('List configured level rewards')),
+ new SlashCommandBuilder().setName('level').setDescription('View your or another member’s level')
+  .addUserOption(o=>o.setName('member').setDescription('Member to check').setRequired(false)),
+ new SlashCommandBuilder().setName('level-leaderboard').setDescription('Show this server’s top levels'),
+ new SlashCommandBuilder().setName('security').setDescription('Enable or disable Chilly security protections')
+  .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+  .addStringOption(o=>o.setName('feature').setDescription('Protection feature').setRequired(true).addChoices(
+   {name:'Anti-nuke alerts',value:'antinuke'},{name:'Anti-raid alerts',value:'antiraid'},
+   {name:'Anti-link',value:'antilink'},{name:'Anti-spam',value:'antispam'},{name:'Anti-abuse',value:'antiabuse'}))
+  .addBooleanOption(o=>o.setName('enabled').setDescription('Enable or disable').setRequired(true))
+].map(c=>c.toJSON());
+
+function xpForNextLevel(level) { return (level * 100) + 75; }
+function levelFromXp(total) {
+ let level=0, remaining=Math.max(0,total);
+ while(remaining>=xpForNextLevel(level) && level<1000) { remaining-=xpForNextLevel(level); level++; }
+ return {level, progress:remaining, required:xpForNextLevel(level)};
+}
+function getLevelRow(guildId,userId) {
+ db.prepare('INSERT OR IGNORE INTO leveling_xp(guild,user,xp,last_message) VALUES(?,?,0,0)').run(guildId,userId);
+ return db.prepare('SELECT * FROM leveling_xp WHERE guild=? AND user=?').get(guildId,userId);
+}
+function account(g,u) {
+ db.prepare('INSERT OR IGNORE INTO global_users(user) VALUES(?)').run(u);
+ return db.prepare('SELECT * FROM global_users WHERE user=?').get(u);
+}
+function money(n) { return n.toLocaleString('en-US')+' Chilly Coins'; }
+function choose(a,n) {
+ const x=[...a], r=[];
+ while(x.length&&r.length<n) r.push(x.splice(Math.floor(Math.random()*x.length),1)[0]);
+ return r;
+}
+async function endGiveaway(id, reroll=false) {
+ const g=db.prepare('SELECT * FROM giveaways WHERE id=?').get(id);
+ if(!g) return {error:'Giveaway not found.'};
+ if(g.ended&&!reroll) return {error:'Giveaway already ended.'};
+ const entries=db.prepare('SELECT user FROM entries WHERE giveaway=?').all(id).map(x=>x.user);
+ const winners=choose(entries,g.winners);
+ if(!reroll) db.prepare('UPDATE giveaways SET ended=1 WHERE id=?').run(id);
+ if(!reroll) {
+  const ch=await client.channels.fetch(g.channel).catch(()=>null);
+  if(ch) {
+   if(g.message) {
+    const m=await ch.messages.fetch(g.message).catch(()=>null);
+    if(m) await m.edit({
+     embeds:[new EmbedBuilder().setTitle('🎉 Giveaway Ended')
+      .setDescription('Prize: '+g.prize+'\nWinners: '+(winners.map(x=>'<@'+x+'>').join(', ')||'No entries')+'\nID: '+id)],
+     components:[]
+    }).catch(()=>{});
+   }
+   if(winners.length) {
+    await ch.send({
+     content:'🎉 '+CHILLY_EMOJI.gift+' Congratulations '+winners.map(x=>'<@'+x+'>').join(', ')+'! You won **'+g.prize+'**!\n'+CHILLY_EMOJI.gift+' Open a ticket to claim the reward!',
+     allowedMentions:{users:winners}
+    }).catch(()=>{});
+   } else {
+    await ch.send('Giveaway ended with no entries.').catch(()=>{});
+   }
+  }
+ } else {
+  const ch=await client.channels.fetch(g.channel).catch(()=>null);
+  if(ch && winners.length) await ch.send({
+   content:'🎉 '+CHILLY_EMOJI.gift+' New giveaway winner(s): '+winners.map(x=>'<@'+x+'>').join(', ')+'! Prize: **'+g.prize+'**.\n'+CHILLY_EMOJI.gift+' Open a ticket to claim the reward!',
+   allowedMentions:{users:winners}
+  }).catch(()=>{});
+ }
+ // DM every winner and explicitly mention them in the message.
+ for(const winnerId of winners) {
+  const user=await client.users.fetch(winnerId).catch(()=>null);
+  if(user) await user.send({
+   content:'🎉 You Won the giveaway! <@'+winnerId+'>\n'+CHILLY_EMOJI.gift+' Prize: **'+g.prize+'**\n'+CHILLY_EMOJI.gift+' Open a ticket to claim the reward!',
+   allowedMentions:{users:[winnerId]}
+  }).catch(()=>{});
+ }
+ return {winners};
+}
+function settings(guildId) {
+ db.prepare('INSERT OR IGNORE INTO guild_settings(guild) VALUES(?)').run(guildId);
+ return db.prepare('SELECT * FROM guild_settings WHERE guild=?').get(guildId);
+}
+async function logAction(guild, embed) {
+ try {
+  const cfg=settings(guild.id);
+  if(!cfg.log_channel) return;
+  const channel=await guild.channels.fetch(cfg.log_channel).catch(()=>null);
+  if(channel && channel.isTextBased()) await channel.send({embeds:[embed]}).catch(()=>{});
+ } catch(e) { console.error('Log delivery error:',e); }
+}
+function auditEmbed(title, color, fields) {
+ return new EmbedBuilder().setColor(color).setTitle(title).addFields(fields).setTimestamp();
+}
+
+// Shared Chilly moderation embed style. Custom emoji IDs are from the user's server.
+const CHILLY_EMOJI = {
+ dm: '<:Dm:1564590774027558993>',
+ arrow: '<:Arrow:1564590038396833812>',
+ moderator: '<:Admin:1564349896402669708>',
+ member: '<:Members:1564349878472015984>',
+ dot: '<:Bluedot:1564349885841408293>',
+ gift: '<:Bluegift:1564349870385406062>',
+ success: '<:Whitetick:1564349880766304456>',
+ rejected: '<:Rejected:1564349876068688032>',
+ admin: '<:Admin:1564349896402669708>',
+ bot: '<:Bot:1564349898709540974>'
+};
+function moderationEmbed({title, targetLabel='Member', targetName, targetId, moderator, reason, duration, dmDone, avatar}) {
+ const lines = [
+  `${CHILLY_EMOJI.member} **${targetLabel}:** ${targetName}${targetId ? ` (\`${targetId}\`)` : ''}`,
+  `${CHILLY_EMOJI.moderator} **Moderator:** ${moderator}`
+ ];
+ if (duration) lines.push('', `${CHILLY_EMOJI.dot} **Duration:** ${duration}`);
+ if (dmDone !== undefined) lines.push('', `${CHILLY_EMOJI.dm} **DM Done?** ${dmDone ? CHILLY_EMOJI.success : CHILLY_EMOJI.rejected}`);
+ lines.push('', `${CHILLY_EMOJI.arrow} **Reason:** ${reason || 'No reason provided'}`);
+ const embed = new EmbedBuilder()
+  .setColor(0x36CFC7)
+  .setTitle(title)
+  .setDescription(lines.join('\n'))
+  .setFooter({text:'Chilly Moderation'});
+ if (avatar) embed.setThumbnail(avatar);
+ return embed;
+}
+const recentMessages = new Map();
+const recentJoins = new Map();
+const actionCounts = new Map();
+const linkPattern = /https?:\/\/|discord\.gg\//i;
+
+client.once('ready', async()=>{
+ console.log('NEXORA RP online as '+client.user.tag);
+ client.user.setPresence({
+  activities:[{name:'Made for NEXORA RP',type:ActivityType.Playing}],
+  status:'online'
+ });
+ try {
+  // `commands` are already JSON payloads (serialized at declaration).
+  const payload = commands;
+  const names = payload.map(command => command.name);
+  const duplicates = names.filter((name, index) => names.indexOf(name) !== index);
+  if (duplicates.length) throw new Error('Duplicate slash command names: ' + [...new Set(duplicates)].join(', '));
+  if (payload.length > 100) throw new Error(`Discord allows at most 100 global commands; found ${payload.length}.`);
+
+  const rest = new REST({ version: '10' }).setToken(TOKEN);
+  const guilds = [...client.guilds.cache.values()];
+  if (!guilds.length) {
+   console.error('SLASH COMMAND SYNC FAILED: bot is not in any server cache. Check bot invite and DISCORD_TOKEN.');
+  }
+  // Keep commands GLOBAL only. Registering the same commands as both guild and
+  // global commands makes Discord show each command twice in a server.
+  // Clear any guild-scoped copies created by earlier versions, then publish globals.
+  for (const guild of guilds) {
+   try {
+    await rest.put(Routes.applicationGuildCommands(CLIENT_ID, guild.id), { body: [] });
+    console.log(`🧹 Cleared old guild-specific slash commands from ${guild.name} (${guild.id}).`);
+   } catch (error) {
+    console.error(`❌ Could not clear guild-specific commands for ${guild.name} (${guild.id}):`, JSON.stringify(error?.rawError || {message:error?.message, code:error?.code}, null, 2));
+   }
+  }
+  try {
+   await rest.put(Routes.applicationCommands(CLIENT_ID), { body: payload });
+   console.log(`✅ Synced ${payload.length} global slash commands (global commands may take a little time to refresh in Discord).`);
+  } catch (error) {
+   console.error('❌ Global slash-command sync failed. Full Discord API details:', JSON.stringify(error?.rawError || {message:error?.message, code:error?.code}, null, 2));
+  }
+ } catch (e) {
+  console.error('❌ Slash-command registration failed before sending to Discord:', e);
+ }
+ for(const g of db.prepare('SELECT id,ends FROM giveaways WHERE ended=0').all()) {
+  setTimeout(()=>endGiveaway(g.id).catch(console.error),Math.max(0,g.ends*1000-Date.now()));
+ }
+});
+function normalizeReactionEmoji(input) {
+ const value = String(input || '').trim();
+ const custom = value.match(/^<a?:([A-Za-z0-9_~]+):(\d+)>$/) || value.match(/^([A-Za-z0-9_~]+):(\d+)$/);
+ if (custom) return { key: custom[2], reactValue: `${custom[1]}:${custom[2]}` };
+ if (/^\d{15,22}$/.test(value)) return { key: value, reactValue: value };
+ return { key: value, reactValue: value };
+}
+
+async function applyReactionRole(reaction, user, addRole) {
+ try {
+  if (user?.bot || !reaction?.message?.guild) return;
+  if (reaction.partial) await reaction.fetch();
+  const message = reaction.message;
+  if (message.partial) await message.fetch();
+  const emojiKey = reaction.emoji.id || reaction.emoji.name;
+  const mapping = db.prepare('SELECT role FROM reaction_roles WHERE guild=? AND channel=? AND message=? AND emoji_key=?')
+   .get(message.guild.id, message.channelId, message.id, emojiKey);
+  if (!mapping) return;
+  const member = await message.guild.members.fetch(user.id).catch(()=>null);
+  if (!member) return;
+  const role = await message.guild.roles.fetch(mapping.role).catch(()=>null);
+  if (!role || role.managed || role.position >= message.guild.members.me.roles.highest.position) return;
+  if (addRole) await member.roles.add(role, 'Chilly reaction role').catch(()=>{});
+  else await member.roles.remove(role, 'Chilly reaction role reaction removed').catch(()=>{});
+ } catch (error) {
+  console.error('Reaction-role event failed:', error?.message || error);
+ }
+}
+
+client.on('messageReactionAdd', (reaction, user) => applyReactionRole(reaction, user, true));
+client.on('messageReactionRemove', (reaction, user) => applyReactionRole(reaction, user, false));
+
+const GIVEAWAY_EMOJI_ID = '1564349893907062844';
+async function handleGiveawayReaction(reaction, user, add) {
+ try {
+  if (!user || user.bot) return;
+  if (reaction.partial) await reaction.fetch();
+  const message = reaction.message;
+  if (message.partial) await message.fetch();
+  if (!message.guild) return;
+  if (reaction.emoji.id !== GIVEAWAY_EMOJI_ID) return;
+  const g = db.prepare('SELECT * FROM giveaways WHERE message=? AND guild=?').get(message.id, message.guild.id);
+  if (!g || g.ended || g.ends * 1000 <= Date.now()) return;
+  if (add) db.prepare('INSERT OR IGNORE INTO entries(giveaway,user) VALUES(?,?)').run(g.id,user.id);
+  else db.prepare('DELETE FROM entries WHERE giveaway=? AND user=?').run(g.id,user.id);
+ } catch (error) {
+  console.error('Giveaway reaction handler error:', error);
+ }
+}
+client.on('messageReactionAdd', (reaction, user) => handleGiveawayReaction(reaction, user, true));
+client.on('messageReactionRemove', (reaction, user) => handleGiveawayReaction(reaction, user, false));
+
+
+async function stealFromSourceMessage(guild, sourceMessage) {
+ if(!guild.members.me?.permissions.has(PermissionFlagsBits.ManageEmojisAndStickers)) {
+  return {ok:false,message:'I need **Manage Expressions** (Manage Emojis and Stickers) permission.'};
+ }
+ const customEmojiMatch = sourceMessage.content?.match(/<a?:([A-Za-z0-9_]{2,32}):(\d{17,20})>/);
+ if(customEmojiMatch) {
+  const [, rawName, id] = customEmojiMatch;
+  const animated = sourceMessage.content.includes(`<a:${rawName}:${id}>`);
+  const ext = animated ? 'gif' : 'png';
+  const url = `https://cdn.discordapp.com/emojis/${id}.${ext}?quality=lossless`;
+  const name = rawName.slice(0,32);
+  const created = await guild.emojis.create({ attachment:url, name, reason:'Emoji added using Chilly /steal' });
+  return {ok:true,message:`✅ Added emoji ${created} (**${created.name}**) to this server.`};
+ }
+ const sticker = sourceMessage.stickers?.first();
+ if(sticker) {
+  const safeName = (sticker.name || 'stolen_sticker').toLowerCase().replace(/[^a-z0-9_]/g,'_').slice(0,30) || 'stolen_sticker';
+  const tags = (sticker.tags || sticker.name || 'sticker').slice(0,200);
+  const created = await guild.stickers.create({ file:sticker.url, name:safeName, tags, reason:'Sticker added using Chilly /steal' });
+  return {ok:true,message:`✅ Added sticker **${created.name}** to this server.`};
+ }
+ return {ok:false,message:'❌ I could not find a custom emoji or sticker in that message. Unicode emojis cannot be added as server emojis.'};
+}
+
+client.on('interactionCreate', async i=>{
+ try {
+  if(i.isButton() && i.customId==='chilly_servercopy_cancel') return i.update({content:'Server copy cancelled.',components:[]});
+  if(i.isButton() && i.customId.startsWith('chilly_servercopy_confirm:')) {
+   const sourceId=i.customId.split(':')[1];
+   const dest=i.guild;
+   if(!dest) return i.reply({content:'Use this button inside the destination server.',ephemeral:true});
+   const allowed=i.user.id===dest.ownerId || !!i.memberPermissions?.has(PermissionFlagsBits.Administrator) || !!i.memberPermissions?.has(PermissionFlagsBits.ManageGuild);
+   if(!allowed) return i.reply({content:'⛔ Only the destination server owner, Administrator, or Manage Server members can confirm this copy.',ephemeral:true});
+   if(sourceId===dest.id) return i.reply({content:'Source and destination servers cannot be the same.',ephemeral:true});
+   await i.deferReply({ephemeral:true});
+   const source=await client.guilds.fetch(sourceId).catch(()=>null);
+   if(!source) return i.editReply('❌ Chilly must be a member of the source server, and the source server ID must be correct.');
+   const botMember=await dest.members.fetchMe().catch(()=>null);
+   if(!botMember?.permissions.has(PermissionFlagsBits.ManageRoles)||!botMember?.permissions.has(PermissionFlagsBits.ManageChannels)) return i.editReply('❌ Chilly needs **Manage Roles** and **Manage Channels** permissions in this destination server.');
+   const sourceRoles=await source.roles.fetch();
+   const sourceChannels=await source.channels.fetch();
+   const roleMap=new Map([[source.id,dest.id]]);
+   let rolesCreated=0, channelsCreated=0, skipped=0;
+   // Create roles from lowest to highest, excluding @everyone and integration/bot-managed roles.
+   const roles=[...sourceRoles.values()].filter(r=>r.id!==source.id&&!r.managed).sort((a,b)=>a.position-b.position);
+   for(const role of roles) {
+    try {
+     const made=await dest.roles.create({name:role.name,color:role.color,hoist:role.hoist,mentionable:role.mentionable,permissions:role.permissions.bitfield,reason:`Server structure copied from ${source.name} using Chilly`});
+     roleMap.set(role.id,made.id); rolesCreated++;
+    } catch(err) { skipped++; console.warn('Server-copy role skipped:',role.name,err.message); }
+   }
+   // Reproduce role order after creation; Discord may adjust positions around managed roles.
+   for(const role of roles) {
+    const mapped=roleMap.get(role.id); if(!mapped) continue;
+    try { const sourceRole=sourceRoles.get(role.id); await dest.roles.cache.get(mapped)?.setPosition(Math.max(1,sourceRole.position),{reason:'Preserve source role order'}); } catch {}
+   }
+   const mapOverwrites=async(channel)=>{
+    const out=[];
+    for(const ow of channel.permissionOverwrites.cache.values()) {
+     let id=null;
+     if(ow.type===0) id=roleMap.get(ow.id)||null;
+     else {
+      const member=await dest.members.fetch(ow.id).catch(()=>null);
+      if(member) id=member.id;
+     }
+     if(!id) continue;
+     out.push({id,type:ow.type,allow:ow.allow.bitfield,deny:ow.deny.bitfield});
+    }
+    return out;
+   };
+   const channels=[...sourceChannels.values()].filter(ch=>!ch.isThread()).sort((a,b)=>{
+    if(a.type===ChannelType.GuildCategory&&b.type!==ChannelType.GuildCategory) return -1;
+    if(b.type===ChannelType.GuildCategory&&a.type!==ChannelType.GuildCategory) return 1;
+    if((a.parent?.position??-1)!==(b.parent?.position??-1)) return (a.parent?.position??-1)-(b.parent?.position??-1);
+    return a.position-b.position;
+   });
+   const channelMap=new Map();
+   for(const ch of channels.filter(x=>x.type===ChannelType.GuildCategory)) {
+    try {
+     const overwrites=await mapOverwrites(ch);
+     const made=await dest.channels.create({name:ch.name,type:ChannelType.GuildCategory,permissionOverwrites:overwrites,reason:`Server structure copied from ${source.name} using Chilly`});
+     channelMap.set(ch.id,made.id); channelsCreated++;
+    } catch(err) { skipped++; console.warn('Server-copy category skipped:',ch.name,err.message); }
+   }
+   const supported=new Set([ChannelType.GuildText,ChannelType.GuildAnnouncement,ChannelType.GuildVoice,ChannelType.GuildStageVoice,ChannelType.GuildForum,ChannelType.GuildMedia]);
+   for(const ch of channels.filter(x=>x.type!==ChannelType.GuildCategory)) {
+    if(!supported.has(ch.type)) { skipped++; continue; }
+    try {
+     const overwrites=await mapOverwrites(ch);
+     const options={name:ch.name,type:ch.type,permissionOverwrites:overwrites,reason:`Server structure copied from ${source.name} using Chilly`};
+     const parentId=ch.parentId?channelMap.get(ch.parentId):null; if(parentId) options.parent=parentId;
+     if(ch.topic!==null&&ch.topic!==undefined) options.topic=ch.topic;
+     if('nsfw' in ch) options.nsfw=ch.nsfw;
+     if(ch.rateLimitPerUser!==undefined) options.rateLimitPerUser=ch.rateLimitPerUser;
+     if(ch.type===ChannelType.GuildVoice||ch.type===ChannelType.GuildStageVoice) {
+      if(ch.bitrate) options.bitrate=Math.min(ch.bitrate,dest.maximumBitrate||ch.bitrate);
+      if(ch.userLimit!==undefined) options.userLimit=ch.userLimit;
+      if(ch.rtcRegion) options.rtcRegion=ch.rtcRegion;
+     }
+     if(ch.defaultAutoArchiveDuration) options.defaultAutoArchiveDuration=ch.defaultAutoArchiveDuration;
+     const made=await dest.channels.create(options);
+     channelMap.set(ch.id,made.id); channelsCreated++;
+    } catch(err) { skipped++; console.warn('Server-copy channel skipped:',ch.name,err.message); }
+   }
+   return i.editReply(`✅ **Server copy finished!**\nSource: **${source.name}**\nDestination: **${dest.name}**\n• Roles created: **${rolesCreated}**\n• Categories and channels created: **${channelsCreated}**\n• Skipped (unsupported types, missing member overwrites, or Discord limits): **${skipped}**\n\nExisting destination roles and channels were not deleted.`);
+  }
+  if(i.isButton()&&(i.customId==='chilly_ticket_open'||i.customId.startsWith('chilly_ticket_open:'))) {
+   const ticketKey=i.customId==='chilly_ticket_open'?'default':i.customId.slice('chilly_ticket_open:'.length);
+   const config=db.prepare('SELECT * FROM ticket_buttons WHERE guild=? AND ticket_key=?').get(i.guild.id,ticketKey);
+   if(!config) return i.reply({content:'This ticket button is no longer configured.',ephemeral:true});
+   const existing=i.guild.channels.cache.find(ch=>ch.type===ChannelType.GuildText && ch.topic?.startsWith(`chilly-ticket:${i.user.id}:${ticketKey}:`));
+   if(existing) return i.reply({content:`You already have this ticket: ${existing}`,ephemeral:true});
+   const perms=[{id:i.guild.roles.everyone.id,deny:[PermissionFlagsBits.ViewChannel]},{id:i.user.id,allow:[PermissionFlagsBits.ViewChannel,PermissionFlagsBits.SendMessages,PermissionFlagsBits.ReadMessageHistory]},{id:config.staff_role,allow:[PermissionFlagsBits.ViewChannel,PermissionFlagsBits.ReadMessageHistory],deny:[PermissionFlagsBits.SendMessages]}];
+   const ch=await i.guild.channels.create({name:`${ticketKey}-${i.user.username}`.toLowerCase().replace(/[^a-z0-9-]/g,'').slice(0,90),type:ChannelType.GuildText,topic:`chilly-ticket:${i.user.id}:${ticketKey}:${config.staff_role}:`,permissionOverwrites:perms});
+   const row=new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('chilly_ticket_claim').setLabel('Claim Ticket').setEmoji('🙋').setStyle(ButtonStyle.Success),new ButtonBuilder().setCustomId('chilly_ticket_close').setLabel('Close Ticket').setEmoji('🔒').setStyle(ButtonStyle.Danger));
+   await ch.send({content:`🎫 ${i.user} <@&${config.staff_role}>`,embeds:[new EmbedBuilder().setColor(0x77DDE7).setTitle(`${config.label} Ticket`).setDescription('Please describe your issue. A staff member must claim this ticket before messaging. Only the claiming staff member can chat and close it.')],components:[row]});
+   return i.reply({content:`Ticket created: ${ch}`,ephemeral:true});
+  }
+  if(i.isButton()&&i.customId==='chilly_ticket_claim') {
+   const topic=i.channel?.topic||'';
+   const match=topic.match(/^chilly-ticket:(\d+):([^:]+):(\d+):?(\d*)$/);
+   if(!match) return i.reply({content:'This is not a valid Chilly ticket.',ephemeral:true});
+   const [,openerId,ticketKey,roleId,claimerId]=match;
+   const isStaff=!!i.memberPermissions?.has(PermissionFlagsBits.Administrator)||!!i.member.roles.cache.has(roleId);
+   if(!isStaff) return i.reply({content:'Only this ticket type’s assigned staff members can claim it.',ephemeral:true});
+   if(claimerId) return i.reply({content:`This ticket has already been claimed by <@${claimerId}>.`,ephemeral:true});
+   await i.channel.permissionOverwrites.edit(i.user.id,{ViewChannel:true,SendMessages:true,ReadMessageHistory:true});
+   await i.channel.permissionOverwrites.edit(roleId,{ViewChannel:true,ReadMessageHistory:true,SendMessages:false});
+   await i.channel.setTopic(`chilly-ticket:${openerId}:${ticketKey}:${roleId}:${i.user.id}`);
+   const row=new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('chilly_ticket_claim').setLabel('Claimed').setEmoji('✅').setStyle(ButtonStyle.Success).setDisabled(true),new ButtonBuilder().setCustomId('chilly_ticket_close').setLabel('Close Ticket').setEmoji('🔒').setStyle(ButtonStyle.Danger));
+   await i.update({components:[row]});
+   await i.channel.send(`✅ This ticket has been claimed by ${i.user}. Only this staff member can message and close the ticket.`);
+   return;
+  }
+  if(i.isButton()&&i.customId==='chilly_ticket_close') {
+   const match=(i.channel?.topic||'').match(/^chilly-ticket:(\d+):([^:]+):(\d+):(\d+)$/);
+   if(!match) return i.reply({content:'This is not a valid or claimed Chilly ticket.',ephemeral:true});
+   const [,openerId,ticketKey,roleId,claimerId]=match;
+   const isAdmin=!!i.memberPermissions?.has(PermissionFlagsBits.Administrator);
+   if(i.user.id!==claimerId&&!isAdmin) return i.reply({content:'Only the staff member who claimed this ticket or a Server Administrator can close it.',ephemeral:true});
+   const config=db.prepare('SELECT log_channel FROM ticket_buttons WHERE guild=? AND ticket_key=?').get(i.guild.id,ticketKey);
+   await i.reply({content:'🔒 Closing ticket…',ephemeral:true});
+   try {
+    const messages=await i.channel.messages.fetch({limit:100});
+    const transcript=[...messages.values()].reverse().map(m=>`[${new Date(m.createdTimestamp).toISOString()}] ${m.author.tag}: ${m.cleanContent}`).join('\n');
+    const log=i.guild.channels.cache.get(config?.log_channel);
+    if(log) await log.send({content:`🔒 Ticket **${ticketKey}** closed by ${i.user} (claimed by <@${claimerId}>; opened by <@${openerId}>).`,files:[new AttachmentBuilder(Buffer.from(transcript||'No messages.'),{name:`ticket-${ticketKey}-${openerId}.txt`})]});
+   } catch(err) { console.error('Ticket transcript/log error:',err); }
+   setTimeout(()=>i.channel.delete(`Ticket closed by ${i.user.tag}; opened by ${openerId}`).catch(()=>{}),1500);
+   return;
+  }
+  if(i.isButton()&&i.customId.startsWith('chilly_rps:')) {
+   const [,gameId,choice]=i.customId.split(':'); const game=rpsGames.get(gameId);
+   if(!game) return i.reply({content:'This RPS game is no longer active.',ephemeral:true});
+   if(![game.challenger,game.opponent].includes(i.user.id)) return i.reply({content:'You are not part of this RPS game.',ephemeral:true});
+   game.picks[i.user.id]=choice;
+   await i.reply({content:'Your choice is locked in: **'+choice+'**.',ephemeral:true});
+   if(game.picks[game.challenger]&&game.picks[game.opponent]) {
+    const a=game.picks[game.challenger], b=game.picks[game.opponent];
+    const win=(a==='rock'&&b==='scissors')||(a==='paper'&&b==='rock')||(a==='scissors'&&b==='paper');
+    if(a===b) {
+     db.transaction(()=>{db.prepare('UPDATE global_users SET coins=coins+? WHERE user=?').run(game.bet,game.challenger);db.prepare('UPDATE global_users SET coins=coins+? WHERE user=?').run(game.bet,game.opponent);})();
+    } else if(win) db.prepare('UPDATE global_users SET coins=coins+? WHERE user=?').run(game.bet*2,game.challenger);
+    else db.prepare('UPDATE global_users SET coins=coins+? WHERE user=?').run(game.bet*2,game.opponent);
+    const result=a===b?'It is a tie! Both bets were refunded.':'Winner: <@'+(win?game.challenger:game.opponent)+'> wins **'+money(game.bet*2)+'**!';
+    const channel=await client.channels.fetch(game.channel).catch(()=>null);
+    if(channel) await channel.send({content:'✊ **RPS Result**\n<@'+game.challenger+'> chose **'+a+'**\n<@'+game.opponent+'> chose **'+b+'**\n'+result}).catch(()=>{});
+    rpsGames.delete(gameId);
+   }
+   return;
+  }
+  if(i.isButton()&&i.customId.startsWith('chilly_enter:')) {
+   const id=i.customId.split(':')[1];
+   const g=db.prepare('SELECT * FROM giveaways WHERE id=?').get(id);
+   if(!g||g.ended||g.ends*1000<Date.now()) return i.reply({content:'Giveaway ended.',ephemeral:true});
+   const r=db.prepare('INSERT OR IGNORE INTO entries(giveaway,user) VALUES(?,?)').run(id,i.user.id);
+
+   return i.reply({content:r.changes?'You entered! Good luck!':'You already entered.',ephemeral:true});
+  }
+  if(i.isStringSelectMenu() && i.customId==='chilly_help_category') {
+   const pages = {
+    aichat:{title:'AI Chat',body:'No AI chat slash command is currently configured in this build.'},
+    antinuke:{title:'AntiNuke',body:'`/security` — Configure Chilly security protections. Whitelist management: `/whitelist add_user`, `/whitelist add_channel`, `/whitelist add_role`, `/whitelist remove_user`, `/whitelist remove_channel`, `/whitelist remove_role`, `/whitelist view_users`, `/whitelist view_channels`, `/whitelist view_roles`.'},
+    automod:{title:'Automod',body:'Automod commands are not currently configured in this build.'},
+    credits:{title:'Credits',body:'`/balance` · `/daily` · `/work` · `/slots` · `/pay` · `/leaderboard` · `/shop` · `/buy` · `/inventory` · `/money`'},
+    giveawaycog:{title:'GiveawayCog',body:'`/gstart` · `/gend` · `/greroll`'},
+    jail:{title:'Jail',body:'`/jail-setup` · `/jail` · `/unjail`'},
+    logs:{title:'Logs',body:'`/setlogs` — Configure the server log channel.'},
+    misc:{title:'Misc',body:'`/ping` · `/help` · `/say` · `/8ball` · `/coinflip` · `/dice` · `/rps` · `/joke` · `/ship` · `/poll` · `/remind`'},
+    moderation:{title:'Moderation',body:'`/warn` · `/warnings` · `/clear` · `/timeout` · `/untimeout` · `/kick` · `/ban` · `/unban`. Each command requires its relevant Discord permission.'},
+    np:{title:'NP',body:'No NP commands are currently configured in this build.'},
+    reqrolecog:{title:'ReqRoleCog',body:'Role-request commands are not currently configured in this build.'},
+    reset:{title:'Reset',body:'No reset command is currently configured in this build.'},
+    responders:{title:'Responders',body:'Responder commands are not currently configured in this build.'},
+    tickets:{title:'Tickets',body:'`/ticket-setup` — Customize panel channel, title, description and support role. Use the Create Ticket button to open private tickets.'},
+    utility:{title:'Utility',body:'`/avatar` · `/userinfo` · `/serverinfo` · `/calculator`'},
+    vchelp:{title:'VC Help',body:'Music commands registered: `/play` · `/skip` · `/pause` · `/resume` · `/stop` · `/queue` · `/leave`. YouTube playback still needs voice provider integration.'},
+    welcomer:{title:'Welcomer',body:'`/welcome-setup` — Set the welcome channel and message. Placeholders: `{user}` and `{server}`.'}
+   };
+   const page=pages[i.values[0]]||pages.misc;
+   return i.update({embeds:[new EmbedBuilder().setColor(0x77DDE7).setAuthor({name:'Chilly • Help Center',iconURL:client.user.displayAvatarURL()}).setTitle('<:F1:1565221539844989060> '+page.title).setDescription('<:Redtick:1565221545453027339> '+page.body).setFooter({text:'Chilly Bot • Select another category below'})]});
+  }
+  if(!i.isChatInputCommand()) return;
+  const c=i.commandName, u=i.user, g=i.guild;
+  const target=i.options.getUser('user', false);
+  if(c==='levelup-setup') {
+   if(!i.memberPermissions?.has(PermissionFlagsBits.ManageGuild) && !isTrustedOwner && !isGuildOwner) return i.reply({content:'⛔ You need Manage Server permission.',ephemeral:true});
+   const channel=i.options.getChannel('channel');
+   const message=i.options.getString('message');
+   if(channel) db.prepare("INSERT INTO chilly_config(guild,key,value) VALUES(?, 'levelup_channel', ?) ON CONFLICT(guild,key) DO UPDATE SET value=excluded.value").run(g.id,channel.id);
+   if(message) db.prepare("INSERT INTO chilly_config(guild,key,value) VALUES(?, 'levelup_message', ?) ON CONFLICT(guild,key) DO UPDATE SET value=excluded.value").run(g.id,message);
+   if(!channel&&!message) return i.reply({content:'ℹ️ Provide a channel and/or message to update the level-up setup. Use `{user}`, `{level}`, and `{xp}` in the message.',ephemeral:true});
+   return i.reply({content:`✅ Level-up setup updated.${channel?`
+Channel: ${channel}`:''}${message?`
+Message: ${message}`:''}`,ephemeral:true});
+  }
+  if(c==='levelrole') {
+   if(!i.memberPermissions?.has(PermissionFlagsBits.ManageRoles) && !isTrustedOwner && !isGuildOwner) return i.reply({content:'⛔ You need Manage Roles permission.',ephemeral:true});
+   const sub=i.options.getSubcommand();
+   if(sub==='add') {
+    const level=i.options.getInteger('level',true), role=i.options.getRole('role',true);
+    if(role.id===g.id||role.managed||role.position>=g.members.me.roles.highest.position) return i.reply({content:'❌ I cannot assign that role. Move Chilly’s highest role above the reward role.',ephemeral:true});
+    db.prepare('INSERT INTO leveling_rewards(guild,level,role) VALUES(?,?,?) ON CONFLICT(guild,level) DO UPDATE SET role=excluded.role').run(g.id,level,role.id);
+    return i.reply({content:`✅ ${role} will be awarded when a member reaches **Level ${level}**.`,ephemeral:true});
+   }
+   if(sub==='remove') { const level=i.options.getInteger('level',true); const r=db.prepare('DELETE FROM leveling_rewards WHERE guild=? AND level=?').run(g.id,level); return i.reply({content:r.changes?`✅ Removed the Level ${level} reward.`:'No reward was configured for that level.',ephemeral:true}); }
+   const rows=db.prepare('SELECT level,role FROM leveling_rewards WHERE guild=? ORDER BY level').all(g.id);
+   return i.reply({content:rows.length?rows.map(r=>`**Level ${r.level}:** <@&${r.role}>`).join('\n'):'No level rewards configured yet.',ephemeral:true});
+  }
+  if(c==='level') {
+   const member=i.options.getUser('member')||u, row=getLevelRow(g.id,member.id), info=levelFromXp(row.xp);
+   const rank=db.prepare('SELECT COUNT(*)+1 AS rank FROM leveling_xp WHERE guild=? AND xp>?').get(g.id,row.xp).rank;
+   const embed=new EmbedBuilder().setColor(0x77DDE7).setTitle(`🏆 ${member.username} • Level ${info.level}`).setDescription(`**XP:** ${row.xp.toLocaleString()} total\n**Progress:** ${info.progress} / ${info.required} XP\n**Server Rank:** #${rank}`).setThumbnail(member.displayAvatarURL());
+   return i.reply({embeds:[embed]});
+  }
+  if(c==='level-leaderboard') {
+   const rows=db.prepare('SELECT user,xp FROM leveling_xp WHERE guild=? ORDER BY xp DESC LIMIT 10').all(g.id);
+   if(!rows.length) return i.reply({content:'No one has earned XP yet.',ephemeral:true});
+   const lines=rows.map((r,index)=>{const lv=levelFromXp(r.xp).level;return `**${index+1}.** <@${r.user}> — Level **${lv}** (${r.xp.toLocaleString()} XP)`;});
+   return i.reply({embeds:[new EmbedBuilder().setColor(0x77DDE7).setTitle('🏆 Level Leaderboard').setDescription(lines.join('\n'))]});
+  }
+  if(c==='servericon') {
+   const raw=i.options.getString('invite',true).trim();
+   const match=raw.match(/(?:https?:\/\/)?(?:www\.)?(?:discord\.gg\/|discord(?:app)?\.com\/invite\/)([A-Za-z0-9-]+)/i) || (/^[A-Za-z0-9-]+$/.test(raw)?[raw,raw]:null);
+   if(!match) return i.reply({content:'Please provide a valid Discord invite link or invite code.',ephemeral:true});
+   await i.deferReply();
+   try {
+    const code=match[1];
+    const metaRes=await fetch(`https://discord.com/api/v10/invites/${encodeURIComponent(code)}?with_counts=true`);
+    if(!metaRes.ok) return i.editReply('❌ I could not read that invite. It may be invalid, expired, or unavailable.');
+    const meta=await metaRes.json();
+    if(!meta.guild?.id || !meta.guild?.icon) return i.editReply('❌ This invite did not provide a server icon.');
+    const hash=meta.guild.icon;
+    const ext=hash.startsWith('a_')?'gif':'png';
+    const iconUrl=`https://cdn.discordapp.com/icons/${meta.guild.id}/${hash}.${ext}?size=1024`;
+    const iconRes=await fetch(iconUrl);
+    if(!iconRes.ok) return i.editReply('❌ I found the server, but could not download its icon.');
+    const file=new AttachmentBuilder(Buffer.from(await iconRes.arrayBuffer()),{name:`${meta.guild.id}-icon.${ext}`});
+    const embed=new EmbedBuilder().setColor(0x77DDE7).setTitle(meta.guild.name||'Server Icon').setDescription(`Server ID: \`${meta.guild.id}\`\nIcon Hash: \`${hash}\``).setImage(`attachment://${meta.guild.id}-icon.${ext}`);
+    return i.editReply({embeds:[embed],files:[file]});
+   } catch(error) { console.error('/servericon failed:',error); return i.editReply('❌ Something went wrong while fetching that server icon.'); }
+  }
+  if(!g&&!['ping','help'].includes(c)) return i.reply({content:'Use this command in a server.',ephemeral:true});
+  const isTrustedOwner = u.id === TRUSTED_OWNER_ID;
+  const isGuildOwner = g && u.id === g.ownerId;
+  if(c==='steal') {
+   if(!g) return i.reply({content:'Use /steal inside a server.',ephemeral:true});
+   if(!i.memberPermissions?.has(PermissionFlagsBits.ManageEmojisAndStickers) && !isTrustedOwner && u.id!==g.ownerId) return i.reply({content:'⛔ You need Manage Expressions permission to use /steal.',ephemeral:true});
+   const messageId=i.options.getString('message_id',true).trim();
+   if(!/^\d{17,20}$/.test(messageId)) return i.reply({content:'Please provide a valid Discord message ID.',ephemeral:true});
+   await i.deferReply({ephemeral:true});
+   try { const source=await i.channel.messages.fetch(messageId); const result=await stealFromSourceMessage(g,source); return i.editReply(result.message); }
+   catch(error) { console.error('/steal failed:',error); return i.editReply('❌ I could not fetch or add that emoji/sticker. Make sure the message is in this channel and I have Read Message History and Manage Expressions permissions. The server may also have reached its emoji/sticker limit.'); }
+  }
+  const hasAdminAccess = isTrustedOwner || isGuildOwner || !!i.memberPermissions?.has(PermissionFlagsBits.Administrator) || !!i.memberPermissions?.has(PermissionFlagsBits.ManageGuild);
+  const moderationPermissions = {
+   warn: PermissionFlagsBits.ModerateMembers,
+   warnings: PermissionFlagsBits.ModerateMembers,
+   clear: PermissionFlagsBits.ManageMessages,
+   timeout: PermissionFlagsBits.ModerateMembers,
+   untimeout: PermissionFlagsBits.ModerateMembers,
+   kick: PermissionFlagsBits.KickMembers,
+   ban: PermissionFlagsBits.BanMembers,
+   unban: PermissionFlagsBits.BanMembers
+  };
+  if(moderationPermissions[c] && !isGuildOwner && !i.memberPermissions?.has(PermissionFlagsBits.Administrator) && !i.memberPermissions?.has(moderationPermissions[c])) {
+   return i.reply({content:`⛔ You need the appropriate Discord permission to use /${c}.`,ephemeral:true});
+  }
+  if(c==='announce') {
+   if(!hasAdminAccess) return i.reply({content:'⛔ /announce is limited to the bot owner, server owner, or members with Manage Server / Administrator permission.',ephemeral:true});
+   const channel=i.options.getChannel('channel',true);
+   const message=i.options.getString('message',true);
+   if(![ChannelType.GuildText, ChannelType.GuildAnnouncement].includes(channel.type)) return i.reply({content:'Please select a regular text channel or an announcement channel.',ephemeral:true});
+   const botMember=g.members.me;
+   const permissions=channel.permissionsFor(botMember);
+   if(!permissions?.has(PermissionFlagsBits.ViewChannel) || !permissions?.has(PermissionFlagsBits.SendMessages)) return i.reply({content:'❌ I need **View Channel** and **Send Messages** permissions in that channel.',ephemeral:true});
+   await channel.send({content:message,allowedMentions:{parse:[]}});
+   return i.reply({content:`✅ Announcement sent in ${channel}.`,ephemeral:true});
+  }
+  if(c==='say') {
+   if(!hasAdminAccess) return i.reply({content:'⛔ /say is limited to the bot owner, server owner, or members with Manage Server / Administrator permission.',ephemeral:true});
+   const channel=i.options.getChannel('channel') || i.channel;
+   const message=i.options.getString('message');
+   if(!channel || !channel.isTextBased() || !channel.send) return i.reply({content:'Please use this command in a text channel or select a text channel.',ephemeral:true});
+   const botMember = g.members.me;
+   if(!botMember || !channel.permissionsFor(botMember)?.has(PermissionFlagsBits.SendMessages)) return i.reply({content:'I cannot send messages in that channel. Check my permissions.',ephemeral:true});
+   await channel.send({content:message, allowedMentions:{parse:[]}});
+   return i.reply({content:'✅ Message sent in '+channel+'.',ephemeral:true});
+  }
+  if(c==='whitelist') {
+   if(!hasAdminAccess) return i.reply({content:'⛔ Whitelist commands are limited to the bot owner, server owner, or members with Manage Server / Administrator permission.',ephemeral:true});
+   const sub=i.options.getSubcommand();
+   const viewKinds={view_users:'user',view_channels:'channel',view_roles:'role'};
+   if(viewKinds[sub]) {
+    const kind=viewKinds[sub];
+    const rows=db.prepare('SELECT kind,target FROM whitelist WHERE guild=? AND kind=? ORDER BY created ASC').all(g.id,kind);
+    const label={user:'Users',channel:'Channels',role:'Roles'}[kind];
+    const list=rows.map(r=>r.kind==='user'?`<@${r.target}> — \`${r.target}\``:r.kind==='role'?`<@&${r.target}> — \`${r.target}\``:`<#${r.target}> — \`${r.target}\``);
+    return i.reply({content:`**Whitelist • ${label}**\\n${list.length?list.join('\\n').slice(0,1850):'No entries yet.'}`,ephemeral:true});
+   }
+   const actions={
+    add_user:{kind:'user',action:'add'},add_channel:{kind:'channel',action:'add'},add_role:{kind:'role',action:'add'},
+    remove_user:{kind:'user',action:'remove'},remove_channel:{kind:'channel',action:'remove'},remove_role:{kind:'role',action:'remove'}
+   };
+   const config=actions[sub];
+   if(!config) return i.reply({content:'Unknown whitelist action.',ephemeral:true});
+   let target;
+   if(config.kind==='user') target=i.options.getUser('user',true).id;
+   if(config.kind==='channel') target=i.options.getChannel('channel',true).id;
+   if(config.kind==='role') target=i.options.getRole('role',true).id;
+   if(config.action==='add') {
+    const result=db.prepare('INSERT OR IGNORE INTO whitelist (guild,kind,target,added_by,created) VALUES (?,?,?,?,?)').run(g.id,config.kind,target,u.id,Date.now());
+    return i.reply({content:result.changes?'✅ Added to whitelist.':'ℹ️ This item is already whitelisted.',ephemeral:true});
+   }
+   const result=db.prepare('DELETE FROM whitelist WHERE guild=? AND kind=? AND target=?').run(g.id,config.kind,target);
+   return i.reply({content:result.changes?'✅ Removed from whitelist.':'ℹ️ This item was not in the whitelist.',ephemeral:true});
+  }
+  if(c==='money') {
+   if(u.id!==g.ownerId) return i.reply({content:'⛔ Only the server owner can use /money.',ephemeral:true});
+   const to=i.options.getUser('user');
+   const amount=i.options.getInteger('amount');
+   if(to.bot) return i.reply({content:'You cannot add coins to a bot.',ephemeral:true});
+   account(g.id,to.id);
+   db.prepare('UPDATE global_users SET coins=coins+? WHERE user=?').run(amount,to.id);
+   const updated=account(g.id,to.id);
+   return i.reply('💰 Added **'+money(amount)+'** to <@'+to.id+'>. New balance: **'+money(updated.coins)+'**.');
+  }
+  if(c==='server-copy') {
+   const allowed=u.id===g.ownerId || !!i.memberPermissions?.has(PermissionFlagsBits.Administrator) || !!i.memberPermissions?.has(PermissionFlagsBits.ManageGuild);
+   if(!allowed) return i.reply({content:'⛔ Only the server owner, Administrator, or Manage Server members can use /server-copy.',ephemeral:true});
+   const sourceId=i.options.getString('source-server-id',true).trim();
+   if(!/^\d{17,20}$/.test(sourceId)) return i.reply({content:'Please provide a valid source server ID.',ephemeral:true});
+   if(sourceId===g.id) return i.reply({content:'Source and destination servers cannot be the same.',ephemeral:true});
+   const source=await client.guilds.fetch(sourceId).catch(()=>null);
+   if(!source) return i.reply({content:'❌ Chilly must be a member of the source server. Check the server ID and invite Chilly to that server first.',ephemeral:true});
+   const [roles,channels]=await Promise.all([source.roles.fetch(),source.channels.fetch()]);
+   const roleCount=[...roles.values()].filter(r=>r.id!==source.id&&!r.managed).length;
+   const channelList=[...channels.values()].filter(ch=>!ch.isThread());
+   const categoryCount=channelList.filter(ch=>ch.type===ChannelType.GuildCategory).length;
+   const channelCount=channelList.length-categoryCount;
+   const row=new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`chilly_servercopy_confirm:${source.id}`).setLabel('Confirm Copy').setEmoji('📋').setStyle(ButtonStyle.Danger),new ButtonBuilder().setCustomId('chilly_servercopy_cancel').setLabel('Cancel').setStyle(ButtonStyle.Secondary));
+   return i.reply({content:`**Server copy preview**\nSource: **${source.name}** (\`${source.id}\`)\nDestination: **${g.name}**\n• Roles (excluding @everyone and managed roles): **${roleCount}**\n• Categories: **${categoryCount}**\n• Channels: **${channelCount}**\n• Role permissions and channel permission overwrites: **Included**\n\nChilly will create these in the destination without deleting existing roles or channels. Member-specific overwrites are copied only for members already in the destination server. Confirm to continue.`,components:[row],ephemeral:true});
+  }
+  if(c==='ticket-setup') {
+   if(!i.memberPermissions?.has(PermissionFlagsBits.Administrator)) return i.reply({content:'⛔ Only members with Administrator permission can configure tickets.',ephemeral:true});
+   const sub=i.options.getSubcommand();
+   if(sub==='add-button') {
+    const key=i.options.getString('key').toLowerCase().replace(/[^a-z0-9_-]/g,'-');
+    const label=i.options.getString('name'), role=i.options.getRole('staff-role'), log=i.options.getChannel('log-channel'), emoji=i.options.getString('emoji');
+    db.prepare('INSERT INTO ticket_buttons(guild,ticket_key,label,emoji,staff_role,log_channel) VALUES(?,?,?,?,?,?) ON CONFLICT(guild,ticket_key) DO UPDATE SET label=excluded.label,emoji=excluded.emoji,staff_role=excluded.staff_role,log_channel=excluded.log_channel').run(g.id,key,label,emoji,role.id,log.id);
+    return i.reply({content:`✅ Ticket button **${label}** saved. Key: \`${key}\`
+Staff: <@&${role.id}>
+Logs: <#${log.id}>`,ephemeral:true});
+   }
+   if(sub==='remove-button') {
+    const key=i.options.getString('key').toLowerCase(); const result=db.prepare('DELETE FROM ticket_buttons WHERE guild=? AND ticket_key=?').run(g.id,key);
+    return i.reply({content:result.changes?'✅ Ticket button removed.':'No button found with that key.',ephemeral:true});
+   }
+   if(sub==='list-buttons') {
+    const rows=db.prepare('SELECT * FROM ticket_buttons WHERE guild=? ORDER BY ticket_key').all(g.id);
+    return i.reply({content:rows.length?rows.map(x=>`• **${x.label}** (\`${x.ticket_key}\`) — Staff: <@&${x.staff_role}> — Logs: <#${x.log_channel}>`).join('\n'):'No ticket buttons configured yet.',ephemeral:true});
+   }
+   if(sub==='panel') {
+    const buttons=db.prepare('SELECT * FROM ticket_buttons WHERE guild=? ORDER BY ticket_key').all(g.id);
+    if(!buttons.length) return i.reply({content:'Add at least one button first using `/ticket-setup add-button`.',ephemeral:true});
+    if(buttons.length>25) return i.reply({content:'Discord panels support up to 25 ticket buttons. Remove some buttons first.',ephemeral:true});
+    const rows=[];
+    for(let n=0;n<buttons.length;n+=5) rows.push(new ActionRowBuilder().addComponents(buttons.slice(n,n+5).map(b=>{const btn=new ButtonBuilder().setCustomId(`chilly_ticket_open:${b.ticket_key}`).setLabel(b.label).setStyle(ButtonStyle.Primary); if(b.emoji) btn.setEmoji(b.emoji); return btn;})));
+    const channel=i.options.getChannel('channel');
+    await channel.send({embeds:[new EmbedBuilder().setColor(0x77DDE7).setTitle(i.options.getString('title')).setDescription(i.options.getString('description'))],components:rows});
+    return i.reply({content:`✅ Ticket panel posted in ${channel} with ${buttons.length} custom button(s).`,ephemeral:true});
+   }
+  }
+  if(c==='welcome-setup') {
+   if(!hasAdminAccess) return i.reply({content:'⛔ Manage Server required.',ephemeral:true});
+   for(const [k,v] of Object.entries({welcome_channel:i.options.getChannel('channel').id,welcome_message:i.options.getString('message')})) db.prepare('INSERT INTO chilly_config(guild,key,value) VALUES(?,?,?) ON CONFLICT(guild,key) DO UPDATE SET value=excluded.value').run(g.id,k,v);
+   return i.reply({content:'✅ Welcome message configured for this server.',ephemeral:true});
+  }
+  if(c==='jail-setup') {
+   if(!hasAdminAccess) return i.reply({content:'⛔ Manage Server required.',ephemeral:true});
+   const role=i.options.getRole('role'); db.prepare('INSERT INTO chilly_config(guild,key,value) VALUES(?,?,?) ON CONFLICT(guild,key) DO UPDATE SET value=excluded.value').run(g.id,'jail_role',role.id);
+   return i.reply({content:'✅ Jail role saved. Make sure the bot role is above it.',ephemeral:true});
+  }
+  if(c==='jail'||c==='unjail') {
+   if(!i.memberPermissions?.has(PermissionFlagsBits.ModerateMembers) && !isGuildOwner && !isTrustedOwner && !i.memberPermissions?.has(PermissionFlagsBits.Administrator)) return i.reply({content:'⛔ Moderate Members permission required.',ephemeral:true});
+   const user=i.options.getUser('user'), member=await g.members.fetch(user.id).catch(()=>null), roleId=db.prepare('SELECT value FROM chilly_config WHERE guild=? AND key=?').get(g.id,'jail_role')?.value;
+   if(!member||!roleId) return i.reply({content:'Set a jail role first with /jail-setup.',ephemeral:true});
+   const role=g.roles.cache.get(roleId); if(!role) return i.reply({content:'Saved jail role no longer exists. Run /jail-setup again.',ephemeral:true});
+   if(c==='jail') { await member.roles.add(role, i.options.getString('reason')||'Jailed by moderator'); return i.reply('🔒 '+user.tag+' has been jailed.'); }
+   await member.roles.remove(role,'Released from jail'); return i.reply('🔓 '+user.tag+' has been released.');
+  }
+  if(['play','skip','pause','resume','stop','queue','leave'].includes(c)) return i.reply({content:'🎵 Music playback needs the voice dependencies installed and a compatible YouTube stream provider. This command is registered, but playback is not enabled in this package yet.',ephemeral:true});
+  if(c==='ping') return i.reply('🏓 Pong! '+client.ws.ping+'ms');
+  if(c==='help') {
+   const red={id:'1565221545453027339',name:'Redtick'};
+   const menu=new StringSelectMenuBuilder().setCustomId('chilly_help_category').setPlaceholder('Select category').addOptions(
+    {label:'aichat',description:'AI chat commands',value:'aichat',emoji:red},
+    {label:'AntiNuke',description:'Security and whitelist tools',value:'antinuke',emoji:red},
+    {label:'Automod',description:'Automatic moderation',value:'automod',emoji:red},
+    {label:'Credits',description:'Chilly Coins and economy',value:'credits',emoji:red},
+    {label:'GiveawayCog',description:'Giveaway tools',value:'giveawaycog',emoji:red},
+    {label:'jail',description:'Jail tools',value:'jail',emoji:red},
+    {label:'Logs',description:'Server logs',value:'logs',emoji:red},
+    {label:'Misc',description:'General and fun commands',value:'misc',emoji:red},
+    {label:'Moderation',description:'Moderation commands',value:'moderation',emoji:red},
+    {label:'np',description:'NP commands',value:'np',emoji:red},
+    {label:'ReqRoleCog',description:'Role requests',value:'reqrolecog',emoji:red},
+    {label:'Reset',description:'Reset tools',value:'reset',emoji:red},
+    {label:'Responders',description:'Automatic responders',value:'responders',emoji:red},
+    {label:'tickets',description:'Ticket tools',value:'tickets',emoji:red},
+    {label:'utility',description:'Utility commands',value:'utility',emoji:red},
+    {label:'Welcomer',description:'Welcome tools',value:'welcomer',emoji:red}
+   );
+   return i.reply({embeds:[new EmbedBuilder().setColor(0x77DDE7).setAuthor({name:'Chilly • Help Center',iconURL:client.user.displayAvatarURL()}).setTitle('<:F1:1565221539844989060> Chilly Help').setDescription('Browse all available Chilly commands by category.\n\n<:Redtick:1565221545453027339> **Categories**\nSelect a category below to view its commands.').setFooter({text:'Chilly Bot • Powered by Spidyyy'})],components:[new ActionRowBuilder().addComponents(menu)]});
+  }
+  if(c==='balance') {
+   const who=target||u, a=account(g.id,who.id);
+   return i.reply('💰 **'+who.username+'** has **'+money(a.coins)+'**.');
+  }
+  if(c==='slots') {
+   const bet=i.options.getInteger('bet'), a=account(g.id,u.id);
+   if(a.coins<bet) return i.reply({content:'Not enough Chilly Coins for that bet.',ephemeral:true});
+   const symbols=['🍒','🍋','🍇','⭐','🔔']; const roll=[0,1,2].map(()=>symbols[Math.floor(Math.random()*symbols.length)]);
+   let multiplier=roll[0]===roll[1]&&roll[1]===roll[2]? (roll[0]==='⭐'?5:3) : (roll[0]===roll[1]||roll[1]===roll[2]||roll[0]===roll[2]?1:0);
+   const delta=multiplier?bet*multiplier: -bet;
+   db.prepare('UPDATE global_users SET coins=coins+? WHERE user=?').run(delta,u.id);
+   return i.reply('🎰 **Chilly Slots**\n'+roll.join(' | ')+'\n'+(multiplier?'🎉 You won **'+money(bet*multiplier)+'**!':'😢 You lost **'+money(bet)+'**.')+'\nBalance: **'+money(account(g.id,u.id).coins)+'**');
+  }
+  if(c==='invites') {
+   const who=target||u, row=db.prepare('SELECT invites FROM invite_counts WHERE guild=? AND user=?').get(g.id,who.id);
+   return i.reply('📨 **'+who.username+'** has **'+(row?.invites||0)+'** tracked invites.\nNote: tracking starts after this version is online; old invite history cannot be recovered.');
+  }
+  if(c==='invites-leaderboard') {
+   const rows=db.prepare('SELECT user,invites FROM invite_counts WHERE guild=? ORDER BY invites DESC LIMIT 10').all(g.id);
+   return i.reply({embeds:[new EmbedBuilder().setColor(0x77DDE7).setTitle('📨 Invite Leaderboard').setDescription(rows.map((r,n)=>(n+1)+'. <@'+r.user+'> — **'+r.invites+'** invites').join('\n')||'No tracked invites yet.')]});
+  }
+  if(c==='daily'||c==='work') {
+   const a=account(g.id,u.id), now=Math.floor(Date.now()/1000);
+   const col=c==='daily'?'daily':'worked', cd=c==='daily'?86400:3600;
+   const amount=c==='daily'?500:Math.floor(Math.random()*201)+100;
+   if(now-a[col]<cd) return i.reply({content:'Try again in '+Math.ceil((cd-(now-a[col]))/60)+' minutes.',ephemeral:true});
+   db.prepare('UPDATE global_users SET coins=coins+?, '+col+'=? WHERE user=?').run(amount,now,u.id);
+   return i.reply('❄️ You earned **'+money(amount)+'**!');
+  }
+  if(c==='pay') {
+   const to=i.options.getUser('user'), amount=i.options.getInteger('amount');
+   if(to.bot||to.id===u.id) return i.reply({content:'Choose another non-bot member.',ephemeral:true});
+   const a=account(g.id,u.id); account(g.id,to.id);
+   if(a.coins<amount) return i.reply({content:'Not enough coins.',ephemeral:true});
+   db.transaction(()=>{
+    db.prepare('UPDATE global_users SET coins=coins-? WHERE user=?').run(amount,u.id);
+    db.prepare('UPDATE global_users SET coins=coins+? WHERE user=?').run(amount,to.id);
+   })();
+   return i.reply('💳 | **<@'+u.id+'>** sent **'+amount.toLocaleString('en-US')+' Chilly Coins** to **<@'+to.id+'>**!');
+  }
+  if(c==='leaderboard') {
+   const rows=db.prepare('SELECT user,coins FROM global_users ORDER BY coins DESC LIMIT 10').all();
+   return i.reply({embeds:[new EmbedBuilder().setTitle('🏆 Coin Leaderboard')
+    .setDescription(rows.map((r,n)=>(n+1)+'. <@'+r.user+'> — '+money(r.coins)).join('\n')||'No users yet.') ]});
+  }
+  if(c==='shop') return i.reply('🛍️ **Chilly Shop**\n🍪 Cookie: 100\n☕ Coffee: 250\n👑 Golden Crown: 1000 coins\nUse `/buy`.');
+  if(c==='buy') {
+   const item=i.options.getString('item'), price={'Cookie':100,'Coffee':250,'Golden Crown':1000}[item], a=account(g.id,u.id);
+   if(a.coins<price) return i.reply({content:'Not enough coins.',ephemeral:true});
+   db.transaction(()=>{
+    db.prepare('UPDATE global_users SET coins=coins-? WHERE user=?').run(price,u.id);
+    db.prepare('INSERT INTO global_inventory(user,item,quantity) VALUES(?,?,1) ON CONFLICT(user,item) DO UPDATE SET quantity=quantity+1').run(u.id,item);
+   })();
+   return i.reply('✅ Purchased **'+item+'**!');
+  }
+  if(c==='inventory') {
+   const who=target||u, rows=db.prepare('SELECT item,quantity FROM global_inventory WHERE user=?').all(who.id);
+   return i.reply('🎒 **'+who.username+'**: '+(rows.map(x=>x.item+' × '+x.quantity).join(', ')||'Empty'));
+  }
+  if(c==='setlogs') {
+   if(!i.memberPermissions?.has(PermissionFlagsBits.ManageGuild)) {
+    return i.reply({content:'You need Manage Server permission to set the log channel.',ephemeral:true});
+   }
+   const channel=i.options.getChannel('channel');
+   if(!channel || !channel.isTextBased()) {
+    return i.reply({content:'Please select a text channel.',ephemeral:true});
+   }
+   const botPerms=channel.permissionsFor(client.user);
+   if(!botPerms?.has(PermissionFlagsBits.ViewChannel) || !botPerms?.has(PermissionFlagsBits.SendMessages) || !botPerms?.has(PermissionFlagsBits.EmbedLinks)) {
+    return i.reply({content:'I need View Channel, Send Messages, and Embed Links permissions in that channel.',ephemeral:true});
+   }
+   settings(g.id);
+   db.prepare('UPDATE guild_settings SET log_channel=? WHERE guild=?').run(channel.id,g.id);
+   return i.reply({content:'✅ Moderation and server logs will be sent to '+channel+'.',ephemeral:true});
+  }
+  if(c==='security') {
+   if(!i.memberPermissions?.has(PermissionFlagsBits.ManageGuild)) {
+    return i.reply({content:'You need Manage Server permission to change security settings.',ephemeral:true});
+   }
+   const feature=i.options.getString('feature');
+   const enabled=i.options.getBoolean('enabled');
+   const allowedFeatures=['antinuke','antiraid','antilink','antispam','antiabuse'];
+   if(!allowedFeatures.includes(feature) || typeof enabled!=='boolean') {
+    return i.reply({content:'Invalid security feature or setting.',ephemeral:true});
+   }
+   settings(g.id);
+   db.prepare(`UPDATE guild_settings SET ${feature}=? WHERE guild=?`).run(enabled?1:0,g.id);
+   const names={antinuke:'Anti-nuke alerts',antiraid:'Anti-raid alerts',antilink:'Anti-link',antispam:'Anti-spam',antiabuse:'Anti-abuse'};
+   return i.reply({embeds:[new EmbedBuilder().setColor(enabled?0x2ECC71:0xE74C3C).setTitle('❄️ Chilly Security Settings').setDescription(`${enabled?'✅ Enabled':'❌ Disabled'} **${names[feature]}**.`).setFooter({text:'Chilly Security'}).setTimestamp()],ephemeral:true});
+  }
+  if(c==='warn') {
+   const to=i.options.getUser('user'), reason=i.options.getString('reason')||'No reason provided';
+   if(to.id===TRUSTED_OWNER_ID) return i.reply({content:'🛡️ This user is protected. Chilly cannot warn this account.',ephemeral:true});
+   let dmDone=false;
+   try { await to.send({embeds:[moderationEmbed({title:'You have been warned!',targetName:`${to.tag}`,targetId:to.id,moderator:`${u.tag}`,reason,avatar:to.displayAvatarURL()})]}); dmDone=true; } catch {}
+   db.prepare('INSERT INTO warnings(guild,user,moderator,reason,created) VALUES(?,?,?,?,?)').run(g.id,to.id,u.id,reason,Date.now());
+   const embed=moderationEmbed({title:'User has been warned!',targetName:`<@${to.id}>`,targetId:to.id,moderator:`<@${u.id}>`,reason,dmDone,avatar:to.displayAvatarURL()});
+   await logAction(g,embed);
+   return i.reply({embeds:[embed]});
+  }
+  if(c==='warnings') {
+   const to=i.options.getUser('user');
+   const rows=db.prepare('SELECT reason,moderator,created FROM warnings WHERE guild=? AND user=? ORDER BY id DESC LIMIT 10').all(g.id,to.id);
+   return i.reply({embeds:[new EmbedBuilder().setTitle('Warnings: '+to.username)
+    .setDescription(rows.map((x,n)=>(n+1)+'. '+x.reason+' — <@'+x.moderator+'>').join('\n')||'No warnings found.')]});
+  }
+  if(c==='clear') {
+   const n=i.options.getInteger('amount'), deleted=await i.channel.bulkDelete(n,true);
+   return i.reply({content:'🧹 Deleted '+deleted.size+' messages.',ephemeral:true});
+  }
+  if(c==='timeout'||c==='untimeout') {
+   const to=i.options.getUser('user');
+   if(to.id===TRUSTED_OWNER_ID) return i.reply({content:'🛡️ This user is protected. Chilly cannot mute or unmute this account.',ephemeral:true});
+   const m=await g.members.fetch(to.id);
+   if(to.id===u.id) return i.reply({content:'You cannot moderate yourself.',ephemeral:true});
+   if(c==='timeout') {
+    const mins=i.options.getInteger('minutes'), reason=i.options.getString('reason')||'No reason provided';
+    let dmDone=false;
+    try { await to.send({embeds:[moderationEmbed({title:'You have been timed out!',targetName:to.tag,targetId:to.id,moderator:u.tag,reason,duration:`${mins} minute(s)`,avatar:to.displayAvatarURL()})]}); dmDone=true; } catch {}
+    await m.timeout(mins*60000,reason);
+    const embed=moderationEmbed({title:'User has been timed out!',targetName:`<@${to.id}>`,targetId:to.id,moderator:`<@${u.id}>`,reason,duration:`${mins} minute(s)`,dmDone,avatar:to.displayAvatarURL()});
+    await logAction(g,embed);
+    return i.reply({embeds:[embed]});
+   }
+   const reason='Timeout removed';
+   let dmDone=false;
+   try { await to.send({embeds:[moderationEmbed({title:'Your timeout has been removed!',targetName:to.tag,targetId:to.id,moderator:u.tag,reason,avatar:to.displayAvatarURL()})]}); dmDone=true; } catch {}
+   await m.timeout(null,reason);
+   const embed=moderationEmbed({title:'User has been unmuted!',targetName:`<@${to.id}>`,targetId:to.id,moderator:`<@${u.id}>`,reason,dmDone,avatar:to.displayAvatarURL()});
+   await logAction(g,embed);
+   return i.reply({embeds:[embed]});
+  }
+  if(c==='kick'||c==='ban') {
+   const to=i.options.getUser('user'), reason=i.options.getString('reason')||'No reason provided';
+   if(to.id===TRUSTED_OWNER_ID) return i.reply({content:'🛡️ This user is protected. Chilly cannot kick or ban this account.',ephemeral:true});
+   const m=await g.members.fetch(to.id);
+   if(to.id===u.id) return i.reply({content:'You cannot moderate yourself.',ephemeral:true});
+   let dmDone=false;
+   try { await to.send({embeds:[moderationEmbed({title:c==='kick'?'You have been kicked!':'You have been banned!',targetName:to.tag,targetId:to.id,moderator:u.tag,reason,avatar:to.displayAvatarURL()})]}); dmDone=true; } catch {}
+   if(c==='kick') await m.kick(reason); else await m.ban({reason});
+   const embed=moderationEmbed({title:c==='kick'?'User has been kicked!':'User has been banned!',targetName:`<@${to.id}>`,targetId:to.id,moderator:`<@${u.id}>`,reason,dmDone,avatar:to.displayAvatarURL()});
+   await logAction(g,embed);
+   return i.reply({embeds:[embed]});
+  }
+  if(c==='unban') {
+   const id=i.options.getString('userid'), reason='Unban command used';
+   let to=null;
+   try { to=await client.users.fetch(id); } catch {}
+   await g.members.unban(id,reason);
+   let dmDone=false;
+   if(to) { try { await to.send({embeds:[moderationEmbed({title:'You have been unbanned!',targetName:to.tag,targetId:to.id,moderator:u.tag,reason,avatar:to.displayAvatarURL()})]}); dmDone=true; } catch {} }
+   const embed=moderationEmbed({title:'User has been unbanned!',targetLabel:'User',targetName:to ? to.tag : `\`${id}\``,targetId:id,moderator:`<@${u.id}>`,reason,dmDone,avatar:to?.displayAvatarURL()});
+   await logAction(g,embed);
+   return i.reply({embeds:[embed]});
+  }
+  if(c==='8ball') return i.reply('🎱 '+choose(['Definitely!','Yes!','Ask again later.','Probably not.','No way!'],1)[0]);
+  if(c==='coinflip') return i.reply('🪙 '+(Math.random()<0.5?'Heads':'Tails')+'!');
+  if(c==='dice') return i.reply('🎲 You rolled '+(1+Math.floor(Math.random()*6))+'!');
+  if(c==='rps') {
+   const opponent=i.options.getUser('opponent'), bet=i.options.getInteger('bet');
+   if(!opponent||opponent.bot||opponent.id===u.id) return i.reply({content:'Choose another real server member (not yourself or a bot).',ephemeral:true});
+   const opponentMember=await g.members.fetch(opponent.id).catch(()=>null);
+   if(!opponentMember) return i.reply({content:'The opponent must be a member of this server.',ephemeral:true});
+   const a=account(g.id,u.id), b=account(g.id,opponent.id);
+   if(a.coins<bet||b.coins<bet) return i.reply({content:'Both players must have at least **'+money(bet)+'** to play.',ephemeral:true});
+   db.transaction(()=>{db.prepare('UPDATE global_users SET coins=coins-? WHERE user=?').run(bet,u.id);db.prepare('UPDATE global_users SET coins=coins-? WHERE user=?').run(bet,opponent.id);})();
+   const gameId=Date.now().toString(36)+Math.random().toString(36).slice(2,6);
+   rpsGames.set(gameId,{guild:g.id,channel:i.channelId,challenger:u.id,opponent:opponent.id,bet,picks:{}});
+   const row=new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId('chilly_rps:'+gameId+':rock').setLabel('🪨 Rock').setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId('chilly_rps:'+gameId+':paper').setLabel('📄 Paper').setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId('chilly_rps:'+gameId+':scissors').setLabel('✂️ Scissors').setStyle(ButtonStyle.Primary));
+   return i.reply({content:'✊ **RPS Coin Duel**\n<@'+u.id+'> challenged <@'+opponent.id+'>. Both players have wagered **'+money(bet)+'**.\nBoth players: choose your move below. Each player can choose once.',components:[row]});
+  }
+  if(c==='joke') return i.reply(choose(['Why did the computer get cold? It left its Windows open!','Why was the math book sad? Too many problems!','What do you call a sleeping dinosaur? A dino-snore!'],1)[0]);
+  if(c==='ship') {
+   const a=i.options.getUser('user1'), b=i.options.getUser('user2');
+   return i.reply('💞 '+a.username+' + '+b.username+': **'+Math.floor(Math.random()*101)+'%** compatibility!');
+  }
+  if(c==='avatar') {
+   const who=target||u;
+   return i.reply({embeds:[new EmbedBuilder().setTitle(who.username+"'s Avatar").setImage(who.displayAvatarURL({size:1024}))]});
+  }
+  if(c==='userinfo') {
+   const who=target||u, m=await g.members.fetch(who.id).catch(()=>null);
+   const e=new EmbedBuilder().setTitle('👤 '+who.username).setThumbnail(who.displayAvatarURL())
+    .addFields({name:'User ID',value:who.id},{name:'Account created',value:'<t:'+Math.floor(who.createdTimestamp/1000)+':F>'});
+   if(m&&m.joinedTimestamp) e.addFields({name:'Joined server',value:'<t:'+Math.floor(m.joinedTimestamp/1000)+':F>'});
+   return i.reply({embeds:[e]});
+  }
+  if(c==='serverinfo') return i.reply({embeds:[new EmbedBuilder().setTitle('🏠 '+g.name)
+   .addFields({name:'Members',value:String(g.memberCount),inline:true},{name:'Server ID',value:g.id})]});
+  if(c==='poll') {
+   const m=await i.reply({content:'📊 **Poll:** '+i.options.getString('question')+'\nReact ✅ for Yes or ❌ for No.',fetchReply:true});
+   await m.react('✅'); await m.react('❌'); return;
+  }
+  if(c==='calculator') {
+   const a=i.options.getNumber('a'), b=i.options.getNumber('b'), op=i.options.getString('operator');
+   if(op==='/'&&b===0) return i.reply({content:'Cannot divide by zero.',ephemeral:true});
+   const r=op==='+'?a+b:op==='-'?a-b:op==='*'?a*b:a/b;
+   return i.reply('🧮 `'+a+' '+op+' '+b+' = '+r+'`');
+  }
+  if(c==='remind') {
+   const seconds=i.options.getInteger('seconds'), msg=i.options.getString('message');
+   await i.reply({content:'⏰ Reminder set for '+seconds+' seconds.',ephemeral:true});
+   setTimeout(()=>i.followUp({content:'⏰ <@'+u.id+'> Reminder: '+msg,allowedMentions:{users:[u.id]}}).catch(()=>{}),seconds*1000);
+   return;
+  }
+  if(c==='autoreact') {
+   if(!g) return i.reply({content:'Use this command inside a server.',ephemeral:true});
+   if(!i.memberPermissions?.has(PermissionFlagsBits.ManageGuild)) return i.reply({content:'⛔ You need Manage Server permission to use /autoreact.',ephemeral:true});
+   const sub=i.options.getSubcommand();
+   if(sub==='add') {
+    const trigger=i.options.getString('trigger',true).trim().toLowerCase();
+    const emoji=i.options.getString('emoji',true).trim();
+    const parsed=normalizeReactionEmoji(emoji);
+    try { await i.guild.emojis.resolve(parsed.key) || null; } catch {}
+    db.prepare('INSERT INTO autoreactions(guild,trigger,emoji) VALUES(?,?,?) ON CONFLICT(guild,trigger) DO UPDATE SET emoji=excluded.emoji').run(g.id,trigger,emoji);
+    return i.reply({content:`✅ Auto-reaction added: **${trigger}** → ${emoji}`,ephemeral:true});
+   }
+   if(sub==='remove') {
+    const trigger=i.options.getString('trigger',true).trim().toLowerCase();
+    const result=db.prepare('DELETE FROM autoreactions WHERE guild=? AND trigger=?').run(g.id,trigger);
+    return i.reply({content:result.changes?'✅ Auto-reaction removed.':'No matching trigger was found.',ephemeral:true});
+   }
+   if(sub==='list') {
+    const rows=db.prepare('SELECT trigger,emoji FROM autoreactions WHERE guild=? ORDER BY trigger').all(g.id);
+    return i.reply({content:rows.length?rows.map(x=>`• **${x.trigger}** → ${x.emoji}`).join('\n'):'No auto-reactions configured.',ephemeral:true});
+   }
+   if(sub==='reset') {
+    const result=db.prepare('DELETE FROM autoreactions WHERE guild=?').run(g.id);
+    return i.reply({content:`✅ Removed ${result.changes} auto-reaction(s).`,ephemeral:true});
+   }
+  }
+  if(c==='auto-role') {
+   if(!g) return i.reply({content:'Use this command inside a server.',ephemeral:true});
+   const role=i.options.getRole('role',true);
+   if(role.id===g.id || role.managed || role.position>=g.members.me.roles.highest.position) return i.reply({content:'⛔ Move my bot role above the selected role and choose a normal role.',ephemeral:true});
+   db.prepare('INSERT INTO chilly_config(guild,key,value) VALUES(?,?,?) ON CONFLICT(guild,key) DO UPDATE SET value=excluded.value').run(g.id,'autorole',role.id);
+   return i.reply({content:`✅ New members will automatically receive ${role}.`,ephemeral:true});
+  }
+  if(c==='role-all') {
+   if(!g) return i.reply({content:'Use this command inside a server.',ephemeral:true});
+   const role=i.options.getRole('role',true), type=i.options.getString('type',true);
+   if(role.id===g.id || role.managed || role.position>=g.members.me.roles.highest.position) return i.reply({content:'⛔ Move my bot role above the selected role and choose a normal role.',ephemeral:true});
+   if(!g.members.me.permissions.has(PermissionFlagsBits.ManageRoles)) return i.reply({content:'I need Manage Roles permission.',ephemeral:true});
+   await i.deferReply({ephemeral:true});
+   let members;
+   try { members=await g.members.fetch(); } catch { return i.editReply('❌ I could not fetch server members. Check the Server Members Intent and permissions.'); }
+   const targets=members.filter(m=>type==='bot'?m.user.bot:!m.user.bot && !m.user.system && !m.user.bot);
+   let added=0, failed=0;
+   for(const member of targets.values()) {
+    if(member.roles.cache.has(role.id) || member.id===g.members.me.id) continue;
+    try { await member.roles.add(role,'Bulk role assignment by Chilly'); added++; }
+    catch { failed++; }
+   }
+   return i.editReply(`✅ Finished. Added ${role} to **${added}** ${type==='bot'?'bot':'human'} member(s).${failed?` Failed: **${failed}**.`:''}`);
+  }
+  if(c==='role-colour') {
+   if(!g) return i.reply({content:'This command can only be used inside a server.',ephemeral:true});
+   if(!i.memberPermissions?.has(PermissionFlagsBits.ManageRoles) && !isGuildOwner && !isTrustedOwner && !i.memberPermissions?.has(PermissionFlagsBits.Administrator)) return i.reply({content:'⛔ Manage Roles permission required.',ephemeral:true});
+   const role=i.options.getRole('role', true);
+   const input=i.options.getString('colour', true).trim().toLowerCase();
+   const namedColours={red:'#FF0000',blue:'#0000FF',green:'#00FF00',yellow:'#FFFF00',orange:'#FFA500',purple:'#800080',pink:'#FFC0CB',black:'#000000',white:'#FFFFFF',cyan:'#00FFFF',magenta:'#FF00FF',teal:'#008080',gold:'#FFD700',grey:'#808080',gray:'#808080',brown:'#A52A2A',navy:'#000080'};
+   const hex=namedColours[input] || (input.startsWith('#')?input:'#'+input);
+   if(!/^#[0-9a-f]{6}$/i.test(hex)) return i.reply({content:'Invalid colour. Use a colour name (Red, Blue, Green, etc.) or a 6-digit hex code like `#FF0000`.',ephemeral:true});
+   if(role.id===g.id || role.managed) return i.reply({content:'⛔ I cannot change the colour of @everyone or an integration-managed role.',ephemeral:true});
+   const botMember=g.members.me;
+   if(!botMember?.permissions.has(PermissionFlagsBits.ManageRoles) || role.position>=botMember.roles.highest.position) return i.reply({content:'⛔ I need Manage Roles permission and my highest role must be above the selected role.',ephemeral:true});
+   try {
+    await role.setColor(hex, `Role colour changed by ${u.tag}`);
+    return i.reply({content:`✅ Changed ${role} colour to **${hex.toUpperCase()}**.`,ephemeral:true});
+   } catch(error) {
+    console.error('role-colour failed:', error);
+    return i.reply({content:'❌ I could not change that role colour. Check my Manage Roles permission and role hierarchy.',ephemeral:true});
+   }
+  }
+  if(c==='reaction-role') {
+   if(!g) return i.reply({content:'This command can only be used inside a server.',ephemeral:true});
+   await i.deferReply({ephemeral:true});
+   const messageId=i.options.getString('message_id', true).trim();
+   const emojiInput=i.options.getString('emoji', true).trim();
+   const role=i.options.getRole('role', true);
+   if(!/^\d{15,22}$/.test(messageId)) return i.editReply('Please provide a valid Discord message ID.');
+   if(role.id===g.id || role.managed || role.position >= g.members.me.roles.highest.position) return i.editReply('I cannot assign that role. Move my bot role above the selected role and choose a non-managed role.');
+   const parsed=normalizeReactionEmoji(emojiInput);
+   if(!parsed.reactValue) return i.editReply('Please provide a valid emoji.');
+   let message=null;
+   for(const channel of g.channels.cache.values()) {
+    if(!channel.isTextBased() || !channel.messages) continue;
+    message=await channel.messages.fetch(messageId).catch(()=>null);
+    if(message) break;
+   }
+   if(!message) return i.editReply('I could not find that message in this server. Check the message ID and make sure I can view its channel.');
+   try {
+    await message.react(parsed.reactValue);
+   } catch (error) {
+    return i.editReply('I could not add that emoji reaction. Check the emoji is valid and I have Add Reactions / Read Message History permissions.');
+   }
+   const emojiKey=parsed.key;
+   db.prepare('INSERT INTO reaction_roles(guild,channel,message,emoji_key,emoji_input,role) VALUES(?,?,?,?,?,?) ON CONFLICT(guild,message,emoji_key) DO UPDATE SET channel=excluded.channel,emoji_input=excluded.emoji_input,role=excluded.role')
+    .run(g.id,message.channelId,message.id,emojiKey,emojiInput,role.id);
+   return i.editReply(`Reaction role set! React with ${emojiInput} on [this message](https://discord.com/channels/${g.id}/${message.channelId}/${message.id}) to get ${role}. Removing the reaction removes the role. Make sure my bot role is above ${role}.`);
+  }
+  if(c==='gstart') {
+   const prize=i.options.getString('prize'), duration=i.options.getString('duration').trim().toLowerCase(), winners=i.options.getInteger('winners');
+   const match=duration.match(/^([1-9]\d*)(m|h|d)$/);
+   if(!match) return i.reply({content:'Invalid duration. Use formats like `1m`, `1h`, or `1d`.',ephemeral:true});
+   const amount=Number(match[1]), unit=match[2];
+   const durationMs=amount*(unit==='m'?60000:unit==='h'?3600000:86400000);
+   if(!Number.isSafeInteger(durationMs) || durationMs<60000 || durationMs>30*86400000)
+    return i.reply({content:'Duration must be between `1m` and `30d`.',ephemeral:true});
+   const id='CH-'+Date.now().toString(36).toUpperCase(), ends=Math.floor((Date.now()+durationMs)/1000);
+   db.prepare('INSERT INTO giveaways(id,guild,channel,prize,winners,ends) VALUES(?,?,?,?,?,?)').run(id,g.id,i.channelId,prize,winners,ends);
+   const embed=new EmbedBuilder().setColor(0x36CFC7).setTitle(`${CHILLY_EMOJI.gift} ${prize} ${CHILLY_EMOJI.gift}`)
+    .setDescription(`${CHILLY_EMOJI.dot} **Winners:** ${winners}\n${CHILLY_EMOJI.dot} **Ends:** <t:${ends}:R> (<t:${ends}:f>)\n${CHILLY_EMOJI.dot} **Hosted by:** <@${u.id}>\n${CHILLY_EMOJI.dot} **Giveaway ID:** \`${id}\`\n\nReact with <a:Winner:${GIVEAWAY_EMOJI_ID}> to enter!`)
+    .setFooter({text:'React to participate'}).setTimestamp(new Date(ends*1000));
+   const msg=await i.reply({embeds:[embed],fetchReply:true});
+   db.prepare('UPDATE giveaways SET message=? WHERE id=?').run(msg.id,id);
+   try { await msg.react(`<a:Winner:${GIVEAWAY_EMOJI_ID}>`); }
+   catch(error) {
+    console.error('Could not add giveaway entry reaction:', error);
+    await msg.reply('I could not add the entry emoji. Please check that I can use external emojis and add reactions.');
+   }
+   setTimeout(()=>endGiveaway(id).catch(console.error),durationMs);
+   return;
+  }
+  if(c==='gend') {
+   const r=await endGiveaway(i.options.getString('id'));
+   return i.reply(r.error?{content:r.error,ephemeral:true}:{content:'Giveaway ended.'});
+  }
+  if(c==='greroll') {
+   const r=await endGiveaway(i.options.getString('id'),true);
+   if(r.error) return i.reply({content:r.error,ephemeral:true});
+   return i.reply(r.winners.length?'🎉 New winner(s): '+r.winners.map(x=>'<@'+x+'>').join(', '):'No entries to reroll.');
+  }
+ } catch(e) {
+  console.error('Command error:',e);
+  const p={content:'Command failed. Check bot permissions and hosting logs.',ephemeral:true};
+  if(i.deferred||i.replied) await i.followUp(p).catch(()=>{});
+  else await i.reply(p).catch(()=>{});
+ }
+});
+// Server event logging and configurable protective filters.
+client.on('messageDelete', async message => {
+ if(!message.guild || message.author?.bot) return;
+ const e=auditEmbed('🗑️ Message Deleted',0x95A5A6,[
+  {name:'Author',value:message.author?`${message.author.tag} (${message.author.id})`:'Unknown'},
+  {name:'Channel',value:`<#${message.channelId}>`},
+  {name:'Content',value:(message.content||'[No cached text]').slice(0,1000)}
+ ]);
+ await logAction(message.guild,e);
+});
+client.on('channelCreate', async channel => {
+ if(!channel.guild) return;
+ const e=auditEmbed('📁 Channel Created',0x2ECC71,[{name:'Channel',value:`${channel.name} (${channel.id})`},{name:'Type',value:String(channel.type)}]);
+ await logAction(channel.guild,e);
+});
+client.on('channelDelete', async channel => {
+ if(!channel.guild) return;
+ const cfg=settings(channel.guild.id);
+ const e=auditEmbed('🗑️ Channel Deleted',0xE74C3C,[{name:'Channel',value:`${channel.name} (${channel.id})`}]);
+ await logAction(channel.guild,e);
+ if(cfg.antinuke) await logAction(channel.guild,auditEmbed('🛡️ Anti-nuke Alert',0xE74C3C,[{name:'Event',value:'A channel was deleted.'},{name:'Channel',value:channel.name},{name:'Action',value:'Alert only; no automatic punishment was applied.'}]));
+});
+client.on('roleDelete', async role => {
+ const cfg=settings(role.guild.id);
+ await logAction(role.guild,auditEmbed('🗑️ Role Deleted',0xE74C3C,[{name:'Role',value:`${role.name} (${role.id})`}]));
+ if(cfg.antinuke) await logAction(role.guild,auditEmbed('🛡️ Anti-nuke Alert',0xE74C3C,[{name:'Event',value:'A role was deleted.'},{name:'Role',value:role.name},{name:'Action',value:'Alert only; check Audit Log and secure staff permissions.'}]));
+});
+client.on('guildBanAdd', async ban => {
+ const e=auditEmbed('🔨 Member Banned',0xE74C3C,[{name:'Member',value:`${ban.user.tag} (${ban.user.id})`},{name:'Reason',value:ban.reason||'Not provided'}]);
+ await logAction(ban.guild,e);
+});
+client.on('guildMemberRemove', async member => {
+ try {
+  const logs=await member.guild.fetchAuditLogs({type:20,limit:5});
+  const entry=logs.entries.find(x=>x.target?.id===member.id && Date.now()-x.createdTimestamp<10000);
+  if(entry) await logAction(member.guild,auditEmbed('👢 Member Kicked',0xE67E22,[{name:'Member',value:`${member.user.tag} (${member.id})`},{name:'Moderator',value:entry.executor?`${entry.executor.tag} (${entry.executor.id})`:'Unknown'},{name:'Reason',value:entry.reason||'Not provided'}]));
+ } catch(e) { console.error('Kick audit lookup failed:',e); }
+ const cfg=settings(member.guild.id);
+ if(cfg.antiraid) {
+  const now=Date.now(), list=(recentJoins.get(member.guild.id)||[]).filter(t=>now-t<60000);
+  if(list.length>=8) await logAction(member.guild,auditEmbed('🚨 Anti-raid Alert',0xE74C3C,[{name:'Event',value:'High member join/leave activity detected.'},{name:'Action',value:'Alert only; review verification and invite settings.'}]));
+ }
+});
+client.on('guildMemberAdd', async member => {
+ try {
+  const roleId=db.prepare('SELECT value FROM chilly_config WHERE guild=? AND key=?').get(member.guild.id,'autorole')?.value;
+  if(roleId) { const role=await member.guild.roles.fetch(roleId).catch(()=>null); const botMember=member.guild.members.me; if(role && !role.managed && role.position<botMember.roles.highest.position && botMember.permissions.has(PermissionFlagsBits.ManageRoles)) await member.roles.add(role,'Configured Chilly auto-role'); }
+ } catch(error) { console.error('Auto-role failed:',error.message); }
+ const cfg=settings(member.guild.id);
+ if(!cfg.antiraid) return;
+ const now=Date.now(), list=(recentJoins.get(member.guild.id)||[]).filter(t=>now-t<30000);
+ list.push(now); recentJoins.set(member.guild.id,list);
+ if(list.length>=6 && list.length%3===0) {
+  await logAction(member.guild,auditEmbed('🚨 Anti-raid Alert',0xE74C3C,[{name:'Detection',value:`${list.length} members joined within 30 seconds.`},{name:'Latest join',value:`${member.user.tag} (${member.id})`},{name:'Action',value:'Alert only. Consider enabling verification or temporarily pausing invites.'}]));
+ }
+});
+client.on('guildMemberUpdate', async (oldMember,newMember) => {
+ const was=oldMember.communicationDisabledUntilTimestamp, now=newMember.communicationDisabledUntilTimestamp;
+ if(was!==now) {
+  const e=auditEmbed(now?'🔇 Member Timed Out':'🔊 Member Timeout Removed',now?0xE67E22:0x2ECC71,[{name:'Member',value:`${newMember.user.tag} (${newMember.id})`},{name:'Until',value:now?`<t:${Math.floor(now/1000)}:F>`:'Timeout cleared'}]);
+  await logAction(newMember.guild,e);
+ }
+});
+client.on('guildMemberAdd', async member => {
+ try { const chId=db.prepare('SELECT value FROM chilly_config WHERE guild=? AND key=?').get(member.guild.id,'welcome_channel')?.value; const tpl=db.prepare('SELECT value FROM chilly_config WHERE guild=? AND key=?').get(member.guild.id,'welcome_message')?.value; const ch=chId?await member.guild.channels.fetch(chId).catch(()=>null):null; if(ch&&tpl) await ch.send({content:tpl.replaceAll('{user}',`<@${member.id}>`).replaceAll('{server}',member.guild.name),allowedMentions:{users:[member.id]}}); } catch(e) { console.error('Welcome message:',e.message); }
+});
+const inviteCache = new Map();
+const rpsGames = new Map();
+client.on('ready', async () => {
+ for (const [, guild] of client.guilds.cache) {
+  try { inviteCache.set(guild.id, await guild.invites.fetch()); } catch { /* Manage Guild permission required for invite tracking */ }
+ }
+});
+client.on('inviteCreate', async invite => {
+ try { const current=await invite.guild.invites.fetch(); inviteCache.set(invite.guild.id,current); } catch {}
+});
+client.on('guildMemberAdd', async member => {
+ try {
+  const old=inviteCache.get(member.guild.id); const current=await member.guild.invites.fetch(); inviteCache.set(member.guild.id,current);
+  if(!old) return;
+  const used=current.find(inv=>{ const prev=old.get(inv.code); return inv.uses>(prev?.uses||0); });
+  if(used?.inviter && used.inviter.id!==member.id) {
+   db.prepare('INSERT INTO invite_counts(guild,user,invites) VALUES(?,?,1) ON CONFLICT(guild,user) DO UPDATE SET invites=invites+1').run(member.guild.id,used.inviter.id);
+  }
+ } catch (e) { console.error('Invite tracking:',e.message); }
+});
+
+client.on('messageCreate', async message => {
+ if(message.author.bot) return;
+ if(message.guild && !message.webhookId && message.content.trim().length >= 2) {
+  const now=Date.now(), row=getLevelRow(message.guild.id,message.author.id);
+  if(now-row.last_message>=60000) {
+   const gain=15+Math.floor(Math.random()*11), before=levelFromXp(row.xp), total=row.xp+gain, after=levelFromXp(total);
+   db.prepare('UPDATE leveling_xp SET xp=?,last_message=? WHERE guild=? AND user=?').run(total,now,message.guild.id,message.author.id);
+   if(after.level>before.level) {
+    const reward=db.prepare('SELECT role FROM leveling_rewards WHERE guild=? AND level=?').get(message.guild.id,after.level);
+    let rewardText='';
+    if(reward) {
+     try {
+      const role=await message.guild.roles.fetch(reward.role);
+      if(role && !role.managed && role.position<message.guild.members.me.roles.highest.position) { await message.member.roles.add(role,'Level reward'); rewardText=` You earned ${role}!`; }
+     } catch(error) { console.error('Level reward assignment failed:',error.message); }
+    }
+    const channelId=db.prepare("SELECT value FROM chilly_config WHERE guild=? AND key='levelup_channel'").get(message.guild.id)?.value;
+    const channel=channelId?await message.guild.channels.fetch(channelId).catch(()=>null):message.channel;
+    const template=db.prepare("SELECT value FROM chilly_config WHERE guild=? AND key='levelup_message'").get(message.guild.id)?.value || '🎉 {user} reached **Level {level}**!';
+    const content=template.replaceAll('{user}',`<@${message.author.id}>`).replaceAll('{level}',String(after.level)).replaceAll('{xp}',String(total))+rewardText;
+    if(channel?.isTextBased()) await channel.send({content,allowedMentions:{users:[message.author.id]}}).catch(()=>{});
+   }
+  }
+ }
+ if(message.guild && message.content) {
+  const lower=message.content.toLowerCase();
+  const matches=db.prepare('SELECT trigger,emoji FROM autoreactions WHERE guild=?').all(message.guild.id).filter(row=>lower.includes(row.trigger));
+  for(const row of matches.slice(0,3)) { try { const parsed=normalizeReactionEmoji(row.emoji); await message.react(parsed.reactValue); } catch(error) { console.error('Auto-reaction failed:',error.message); } }
+ }
+ if(!message.guild) return;
+ const cfg=settings(message.guild.id);
+ if(cfg.antilink && linkPattern.test(message.content) && !message.member.permissions.has(PermissionFlagsBits.ManageMessages)) {
+  await message.delete().catch(()=>{});
+  await message.channel.send({content:`${message.author}, links are disabled in this server.`,allowedMentions:{users:[message.author.id]}}).then(m=>setTimeout(()=>m.delete().catch(()=>{}),5000)).catch(()=>{});
+  await logAction(message.guild,auditEmbed('🔗 Link Blocked',0xF1C40F,[{name:'Member',value:`${message.author.tag} (${message.author.id})`},{name:'Channel',value:`${message.channel}`},{name:'Content',value:message.content.slice(0,900)}]));
+  return;
+ }
+ if(cfg.antispam) {
+  const key=`${message.guild.id}:${message.author.id}`, now=Date.now();
+  const arr=(recentMessages.get(key)||[]).filter(t=>now-t<7000); arr.push(now); recentMessages.set(key,arr);
+  if(arr.length>=6 && !message.member.permissions.has(PermissionFlagsBits.ManageMessages)) {
+   await message.delete().catch(()=>{});
+   await logAction(message.guild,auditEmbed('🚫 Anti-spam Triggered',0xE67E22,[{name:'Member',value:`${message.author.tag} (${message.author.id})`},{name:'Channel',value:`${message.channel}`},{name:'Detection',value:'6 messages within 7 seconds.'}]));
+   recentMessages.set(key,[]);
+  }
+ }
+ if(cfg.antiabuse && /\b(?:idiot|stupid)\b/i.test(message.content) && !message.member.permissions.has(PermissionFlagsBits.ManageMessages)) {
+  await message.delete().catch(()=>{});
+  await logAction(message.guild,auditEmbed('⚠️ Anti-abuse Filter',0xF1C40F,[{name:'Member',value:`${message.author.tag} (${message.author.id})`},{name:'Channel',value:`${message.channel}`},{name:'Action',value:'Message removed by configured word filter.'}]));
+ }
+});
+
+// DM a welcome embed to the member who added Chilly to a server.
+client.on('guildCreate', async guild => {
+ try {
+  // Discord records the person who added the bot in the server audit log.
+  const audit = await guild.fetchAuditLogs({ type: 28, limit: 8 }).catch(() => null); // AuditLogEvent.BotAdd
+  const entry = audit?.entries.find(e =>
+   e.target?.id === client.user.id && Date.now() - e.createdTimestamp < 120000
+  );
+  // If audit-log access is unavailable, the server owner is the safest fallback recipient.
+  const recipient = entry?.executor || await guild.fetchOwner().then(m => m.user).catch(() => null);
+  if (!recipient || recipient.bot) return;
+
+  const embed = new EmbedBuilder()
+   .setColor(0x2878E8)
+   .setTitle('Welcome 👋')
+   .setDescription(
+    `Hi, I'm **${client.user.username}**! Thanks for adding me to your server.\n\n` +
+    `I can help with your server's **leveling, global economy, moderation, security, giveaways, tickets, welcome messages, autoroles, reaction roles, invite tracking, and utility commands**.\n\n` +
+    `Use **/help** to explore my commands and get started!`
+   )
+   .addFields({ name: 'Need help?', value: '[Join the Chilly Support Server](https://discord.gg/TFVrsdNWGx)' })
+   .setFooter({ text: `${guild.name} • Thanks for choosing Chilly!` })
+   .setTimestamp();
+
+  const row = new ActionRowBuilder().addComponents(
+   new ButtonBuilder()
+    .setLabel('Join Support Server')
+    .setStyle(ButtonStyle.Link)
+    .setURL('https://discord.gg/TFVrsdNWGx')
+  );
+  await recipient.send({ embeds: [embed], components: [row] });
+ } catch (error) {
+  console.error(`Could not send Chilly welcome DM for ${guild.id}:`, error.message);
+ }
+});
+
+client.login(TOKEN);
