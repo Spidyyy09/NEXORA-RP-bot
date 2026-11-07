@@ -1,9 +1,19 @@
-# NEXORA RP Discord Bot
+# NEXORA RP — FadeHost setup
 
-## Hosting
-1. Upload `index.js`, `package.json`, and this README to the repository root (same folder).
-2. Set the start command to `npm start`.
-3. Set the environment variables `DISCORD_TOKEN` and `CLIENT_ID` in your host's environment/settings panel.
-4. Use Node.js 20 or newer.
+## Required settings
+- Node.js: **20 LTS** (recommended)
+- Start command: `npm start`
+- Environment variables:
+  - `DISCORD_TOKEN` = your Discord bot token
+  - `CLIENT_ID` = your Discord application/client ID
 
-The host will install dependencies from `package.json` during deployment.
+## Upload
+Upload the contents of this folder directly into the repository root (the same level as `index.js` and `package.json`). Do not upload the folder as an extra nested directory.
+
+## Dependencies
+FadeHost should run `npm install` from the repository root. `better-sqlite3` is a native Node module, so the installed module must match the server's Node.js runtime. Do not copy `node_modules` from a different computer or Node version.
+
+If the host provides a console after dependencies are installed, run:
+`npm rebuild better-sqlite3`
+
+If rebuilding reports missing `make`, `g++`, or Python, the hosting node/container needs native build tools enabled by the host; contact FadeHost support and ask them to enable/install the build tools or provide a compatible prebuilt better-sqlite3 binary for Node 20 Linux.
