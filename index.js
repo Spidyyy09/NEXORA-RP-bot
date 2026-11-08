@@ -405,16 +405,16 @@ function auditEmbed(title, color, fields) {
 
 // Shared Chilly moderation embed style. Custom emoji IDs are from the user's server.
 const CHILLY_EMOJI = {
- dm: '<:Dm:1564590774027558993>',
- arrow: '<:Arrow:1564590038396833812>',
- moderator: '<:Admin:1564349896402669708>',
- member: '<:Members:1564349878472015984>',
- dot: '<:Bluedot:1564349885841408293>',
- gift: '<:Bluegift:1564349870385406062>',
- success: '<:Whitetick:1564349880766304456>',
- rejected: '<:Rejected:1564349876068688032>',
- admin: '<:Admin:1564349896402669708>',
- bot: '<:Bot:1564349898709540974>'
+ dm: '',
+ arrow: '',
+ moderator: '',
+ member: '',
+ dot: '',
+ gift: '',
+ success: '',
+ rejected: '',
+ admin: '',
+ bot: ''
 };
 function moderationEmbed({title, targetLabel='Member', targetName, targetId, moderator, reason, duration, dmDone, avatar}) {
  const lines = [
@@ -733,7 +733,7 @@ client.on('interactionCreate', async i=>{
     welcomer:{title:'Welcomer',body:'`/welcome-setup` — Set the welcome channel and message. Placeholders: `{user}` and `{server}`.'}
    };
    const page=pages[i.values[0]]||pages.misc;
-   return i.update({embeds:[new EmbedBuilder().setColor(0x77DDE7).setAuthor({name:'Chilly • Help Center',iconURL:client.user.displayAvatarURL()}).setTitle('<:F1:1565221539844989060> '+page.title).setDescription('<:Redtick:1565221545453027339> '+page.body).setFooter({text:'Chilly Bot • Select another category below'})]});
+   return i.update({embeds:[new EmbedBuilder().setColor(0x77DDE7).setAuthor({name:'Chilly • Help Center',iconURL:client.user.displayAvatarURL()}).setTitle(' '+page.title).setDescription(' '+page.body).setFooter({text:'Chilly Bot • Select another category below'})]});
   }
   if(!i.isChatInputCommand()) return;
   const c=i.commandName, u=i.user, g=i.guild;
@@ -966,7 +966,7 @@ Logs: <#${log.id}>`,ephemeral:true});
     {label:'utility',description:'Utility commands',value:'utility',emoji:red},
     {label:'Welcomer',description:'Welcome tools',value:'welcomer',emoji:red}
    );
-   return i.reply({embeds:[new EmbedBuilder().setColor(0x77DDE7).setAuthor({name:'Chilly • Help Center',iconURL:client.user.displayAvatarURL()}).setTitle('<:F1:1565221539844989060> Chilly Help').setDescription('Browse all available Chilly commands by category.\n\n<:Redtick:1565221545453027339> **Categories**\nSelect a category below to view its commands.').setFooter({text:'Chilly Bot • Powered by Spidyyy'})],components:[new ActionRowBuilder().addComponents(menu)]});
+   return i.reply({embeds:[new EmbedBuilder().setColor(0x77DDE7).setAuthor({name:'Chilly • Help Center',iconURL:client.user.displayAvatarURL()}).setTitle(' Chilly Help').setDescription('Browse all available Chilly commands by category.\n\n **Categories**\nSelect a category below to view its commands.').setFooter({text:'Chilly Bot • Powered by Spidyyy'})],components:[new ActionRowBuilder().addComponents(menu)]});
   }
   if(c==='balance') {
    const who=target||u, a=account(g.id,who.id);
