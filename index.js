@@ -572,7 +572,7 @@ async function applyReactionRole(reaction, user, addRole) {
 client.on('messageReactionAdd', (reaction, user) => applyReactionRole(reaction, user, true));
 client.on('messageReactionRemove', (reaction, user) => applyReactionRole(reaction, user, false));
 
-const GIVEAWAY_EMOJI_ID = '1564349893907062844';
+const GIVEAWAY_EMOJI_ID = '1568843733351403560';
 async function handleGiveawayReaction(reaction, user, add) {
  try {
   if (!user || user.bot) return;
@@ -1343,11 +1343,11 @@ Logs: <#${log.id}>`,ephemeral:true});
    const id='CH-'+Date.now().toString(36).toUpperCase(), ends=Math.floor((Date.now()+durationMs)/1000);
    db.prepare('INSERT INTO giveaways(id,guild,channel,prize,winners,ends) VALUES(?,?,?,?,?,?)').run(id,g.id,i.channelId,prize,winners,ends);
    const embed=new EmbedBuilder().setColor(0x36CFC7).setTitle(`${CHILLY_EMOJI.gift} ${prize} ${CHILLY_EMOJI.gift}`)
-    .setDescription(`${CHILLY_EMOJI.dot} **Winners:** ${winners}\n${CHILLY_EMOJI.dot} **Ends:** <t:${ends}:R> (<t:${ends}:f>)\n${CHILLY_EMOJI.dot} **Hosted by:** <@${u.id}>\n${CHILLY_EMOJI.dot} **Giveaway ID:** \`${id}\`\n\nReact with <a:Winner:${GIVEAWAY_EMOJI_ID}> to enter!`)
+    .setDescription(`${CHILLY_EMOJI.dot} **Winners:** ${winners}\n${CHILLY_EMOJI.dot} **Ends:** <t:${ends}:R> (<t:${ends}:f>)\n${CHILLY_EMOJI.dot} **Hosted by:** <@${u.id}>\n${CHILLY_EMOJI.dot} **Giveaway ID:** \`${id}\`\n\nReact with <:Star:${GIVEAWAY_EMOJI_ID}> to enter!`)
     .setFooter({text:'React to participate'}).setTimestamp(new Date(ends*1000));
    const msg=await i.reply({embeds:[embed],fetchReply:true});
    db.prepare('UPDATE giveaways SET message=? WHERE id=?').run(msg.id,id);
-   try { await msg.react(`<a:Winner:${GIVEAWAY_EMOJI_ID}>`); }
+   try { await msg.react(`<:Star:${GIVEAWAY_EMOJI_ID}>`); }
    catch(error) {
     console.error('Could not add giveaway entry reaction:', error);
     await msg.reply('I could not add the entry emoji. Please check that I can use external emojis and add reactions.');
