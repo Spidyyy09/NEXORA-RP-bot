@@ -179,12 +179,12 @@ const commands = [
   .addUserOption(o=>o.setName('user').setDescription('Member')),
  new SlashCommandBuilder().setName('daily').setDescription('Claim daily coins'),
  new SlashCommandBuilder().setName('work').setDescription('Earn coins by working'),
- new SlashCommandBuilder().setName('slots').setDescription('Bet Chilly Coins on the slot machine')
+ new SlashCommandBuilder().setName('slots').setDescription('Bet NexCoins on the slot machine')
   .addIntegerOption(o=>o.setName('bet').setDescription('Coins to bet').setMinValue(1).setMaxValue(1000000).setRequired(true)),
  new SlashCommandBuilder().setName('invites').setDescription('Check your tracked invites')
   .addUserOption(o=>o.setName('user').setDescription('Member to check')),
  new SlashCommandBuilder().setName('invites-leaderboard').setDescription('Top inviters in this server'),
- new SlashCommandBuilder().setName('pay').setDescription('Pay Chilly Coins to a member')
+ new SlashCommandBuilder().setName('pay').setDescription('Pay NexCoins to a member')
   .addUserOption(o=>o.setName('user').setDescription('Recipient').setRequired(true))
   .addIntegerOption(o=>o.setName('amount').setDescription('Amount').setMinValue(1).setRequired(true)),
  new SlashCommandBuilder().setName('leaderboard').setDescription('Richest members'),
@@ -231,7 +231,7 @@ const commands = [
   .addStringOption(o=>o.setName('question').setDescription('Question').setRequired(true)),
  new SlashCommandBuilder().setName('coinflip').setDescription('Flip a coin'),
  new SlashCommandBuilder().setName('dice').setDescription('Roll a dice'),
- new SlashCommandBuilder().setName('rps').setDescription('Challenge a real member to RPS for Chilly Coins')
+ new SlashCommandBuilder().setName('rps').setDescription('Challenge a real member to RPS for NexCoins')
   .addUserOption(o=>o.setName('opponent').setDescription('Member to challenge').setRequired(true))
   .addIntegerOption(o=>o.setName('bet').setDescription('Coins each player bets').setMinValue(1).setMaxValue(1000000).setRequired(true)),
  new SlashCommandBuilder().setName('joke').setDescription('Get a clean joke'),
@@ -247,7 +247,7 @@ const commands = [
   .addStringOption(o=>o.setName('invite').setDescription('Discord server invite link').setRequired(true)),
  new SlashCommandBuilder().setName('server-copy').setDescription('Copy roles, permissions, categories and channels from another server')
   .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
-  .addStringOption(o=>o.setName('source-server-id').setDescription('Server ID of the source server (Chilly must be in it)').setMinLength(17).setMaxLength(20).setRequired(true)),
+  .addStringOption(o=>o.setName('source-server-id').setDescription('Server ID of the source server (NEXORA must be in it)').setMinLength(17).setMaxLength(20).setRequired(true)),
  new SlashCommandBuilder().setName('poll').setDescription('Create yes/no poll')
   .addStringOption(o=>o.setName('question').setDescription('Question').setRequired(true)),
  new SlashCommandBuilder().setName('calculator').setDescription('Calculate two numbers')
@@ -315,7 +315,7 @@ const commands = [
  new SlashCommandBuilder().setName('level').setDescription('View your or another member’s level')
   .addUserOption(o=>o.setName('member').setDescription('Member to check').setRequired(false)),
  new SlashCommandBuilder().setName('level-leaderboard').setDescription('Show this server’s top levels'),
- new SlashCommandBuilder().setName('security').setDescription('Enable or disable Chilly security protections')
+ new SlashCommandBuilder().setName('security').setDescription('Enable or disable NEXORA security protections')
   .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
   .addStringOption(o=>o.setName('feature').setDescription('Protection feature').setRequired(true).addChoices(
    {name:'Anti-nuke alerts',value:'antinuke'},{name:'Anti-raid alerts',value:'antiraid'},
@@ -337,7 +337,7 @@ function account(g,u) {
  db.prepare('INSERT OR IGNORE INTO global_users(user) VALUES(?)').run(u);
  return db.prepare('SELECT * FROM global_users WHERE user=?').get(u);
 }
-function money(n) { return n.toLocaleString('en-US')+' Chilly Coins'; }
+function money(n) { return n.toLocaleString('en-US')+' 💷 NexCoins'; }
 function choose(a,n) {
  const x=[...a], r=[];
  while(x.length&&r.length<n) r.push(x.splice(Math.floor(Math.random()*x.length),1)[0]);
@@ -463,7 +463,7 @@ const CUSTOM_EMOJI = {
   music: '<:3630:1568842993606074459>'
 };
 
-// Shared Chilly moderation embed style.
+// Shared NEXORA moderation embed style.
 const CHILLY_EMOJI = {
  dm: '',
  arrow: '',
@@ -488,7 +488,7 @@ function moderationEmbed({title, targetLabel='Member', targetName, targetId, mod
   .setColor(0x36CFC7)
   .setTitle(title)
   .setDescription(lines.join('\n'))
-  .setFooter({text:'Chilly Moderation'});
+  .setFooter({text:'NEXORA Moderation'});
  if (avatar) embed.setThumbnail(avatar);
  return embed;
 }
@@ -562,8 +562,8 @@ async function applyReactionRole(reaction, user, addRole) {
   if (!member) return;
   const role = await message.guild.roles.fetch(mapping.role).catch(()=>null);
   if (!role || role.managed || role.position >= message.guild.members.me.roles.highest.position) return;
-  if (addRole) await member.roles.add(role, 'Chilly reaction role').catch(()=>{});
-  else await member.roles.remove(role, 'Chilly reaction role reaction removed').catch(()=>{});
+  if (addRole) await member.roles.add(role, 'NEXORA reaction role').catch(()=>{});
+  else await member.roles.remove(role, 'NEXORA reaction role reaction removed').catch(()=>{});
  } catch (error) {
   console.error('Reaction-role event failed:', error?.message || error);
  }
@@ -604,14 +604,14 @@ async function stealFromSourceMessage(guild, sourceMessage) {
   const ext = animated ? 'gif' : 'png';
   const url = `https://cdn.discordapp.com/emojis/${id}.${ext}?quality=lossless`;
   const name = rawName.slice(0,32);
-  const created = await guild.emojis.create({ attachment:url, name, reason:'Emoji added using Chilly /steal' });
+  const created = await guild.emojis.create({ attachment:url, name, reason:'Emoji added using NEXORA /steal' });
   return {ok:true,message:`<:3682:1568843729287258123> Added emoji ${created} (**${created.name}**) to this server.`};
  }
  const sticker = sourceMessage.stickers?.first();
  if(sticker) {
   const safeName = (sticker.name || 'stolen_sticker').toLowerCase().replace(/[^a-z0-9_]/g,'_').slice(0,30) || 'stolen_sticker';
   const tags = (sticker.tags || sticker.name || 'sticker').slice(0,200);
-  const created = await guild.stickers.create({ file:sticker.url, name:safeName, tags, reason:'Sticker added using Chilly /steal' });
+  const created = await guild.stickers.create({ file:sticker.url, name:safeName, tags, reason:'Sticker added using NEXORA /steal' });
   return {ok:true,message:`<:3682:1568843729287258123> Added sticker **${created.name}** to this server.`};
  }
  return {ok:false,message:'<:3660:1568843631857635418> I could not find a custom emoji or sticker in that message. Unicode emojis cannot be added as server emojis.'};
@@ -629,9 +629,9 @@ client.on('interactionCreate', async i=>{
    if(sourceId===dest.id) return i.reply({content:'Source and destination servers cannot be the same.',ephemeral:true});
    await i.deferReply({ephemeral:true});
    const source=await client.guilds.fetch(sourceId).catch(()=>null);
-   if(!source) return i.editReply('<:3660:1568843631857635418> Chilly must be a member of the source server, and the source server ID must be correct.');
+   if(!source) return i.editReply('<:3660:1568843631857635418> NEXORA must be a member of the source server, and the source server ID must be correct.');
    const botMember=await dest.members.fetchMe().catch(()=>null);
-   if(!botMember?.permissions.has(PermissionFlagsBits.ManageRoles)||!botMember?.permissions.has(PermissionFlagsBits.ManageChannels)) return i.editReply('<:3660:1568843631857635418> Chilly needs **Manage Roles** and **Manage Channels** permissions in this destination server.');
+   if(!botMember?.permissions.has(PermissionFlagsBits.ManageRoles)||!botMember?.permissions.has(PermissionFlagsBits.ManageChannels)) return i.editReply('<:3660:1568843631857635418> NEXORA needs **Manage Roles** and **Manage Channels** permissions in this destination server.');
    const sourceRoles=await source.roles.fetch();
    const sourceChannels=await source.channels.fetch();
    const roleMap=new Map([[source.id,dest.id]]);
@@ -640,7 +640,7 @@ client.on('interactionCreate', async i=>{
    const roles=[...sourceRoles.values()].filter(r=>r.id!==source.id&&!r.managed).sort((a,b)=>a.position-b.position);
    for(const role of roles) {
     try {
-     const made=await dest.roles.create({name:role.name,color:role.color,hoist:role.hoist,mentionable:role.mentionable,permissions:role.permissions.bitfield,reason:`Server structure copied from ${source.name} using Chilly`});
+     const made=await dest.roles.create({name:role.name,color:role.color,hoist:role.hoist,mentionable:role.mentionable,permissions:role.permissions.bitfield,reason:`Server structure copied from ${source.name} using NEXORA`});
      roleMap.set(role.id,made.id); rolesCreated++;
     } catch(err) { skipped++; console.warn('Server-copy role skipped:',role.name,err.message); }
    }
@@ -673,7 +673,7 @@ client.on('interactionCreate', async i=>{
    for(const ch of channels.filter(x=>x.type===ChannelType.GuildCategory)) {
     try {
      const overwrites=await mapOverwrites(ch);
-     const made=await dest.channels.create({name:ch.name,type:ChannelType.GuildCategory,permissionOverwrites:overwrites,reason:`Server structure copied from ${source.name} using Chilly`});
+     const made=await dest.channels.create({name:ch.name,type:ChannelType.GuildCategory,permissionOverwrites:overwrites,reason:`Server structure copied from ${source.name} using NEXORA`});
      channelMap.set(ch.id,made.id); channelsCreated++;
     } catch(err) { skipped++; console.warn('Server-copy category skipped:',ch.name,err.message); }
    }
@@ -682,7 +682,7 @@ client.on('interactionCreate', async i=>{
     if(!supported.has(ch.type)) { skipped++; continue; }
     try {
      const overwrites=await mapOverwrites(ch);
-     const options={name:ch.name,type:ch.type,permissionOverwrites:overwrites,reason:`Server structure copied from ${source.name} using Chilly`};
+     const options={name:ch.name,type:ch.type,permissionOverwrites:overwrites,reason:`Server structure copied from ${source.name} using NEXORA`};
      const parentId=ch.parentId?channelMap.get(ch.parentId):null; if(parentId) options.parent=parentId;
      if(ch.topic!==null&&ch.topic!==undefined) options.topic=ch.topic;
      if('nsfw' in ch) options.nsfw=ch.nsfw;
@@ -714,7 +714,7 @@ client.on('interactionCreate', async i=>{
   if(i.isButton()&&i.customId==='chilly_ticket_claim') {
    const topic=i.channel?.topic||'';
    const match=topic.match(/^chilly-ticket:(\d+):([^:]+):(\d+):?(\d*)$/);
-   if(!match) return i.reply({content:'This is not a valid Chilly ticket.',ephemeral:true});
+   if(!match) return i.reply({content:'This is not a valid NEXORA ticket.',ephemeral:true});
    const [,openerId,ticketKey,roleId,claimerId]=match;
    const isStaff=!!i.memberPermissions?.has(PermissionFlagsBits.Administrator)||!!i.member.roles.cache.has(roleId);
    if(!isStaff) return i.reply({content:'Only this ticket type’s assigned staff members can claim it.',ephemeral:true});
@@ -729,7 +729,7 @@ client.on('interactionCreate', async i=>{
   }
   if(i.isButton()&&i.customId==='chilly_ticket_close') {
    const match=(i.channel?.topic||'').match(/^chilly-ticket:(\d+):([^:]+):(\d+):(\d+)$/);
-   if(!match) return i.reply({content:'This is not a valid or claimed Chilly ticket.',ephemeral:true});
+   if(!match) return i.reply({content:'This is not a valid or claimed NEXORA ticket.',ephemeral:true});
    const [,openerId,ticketKey,roleId,claimerId]=match;
    const isAdmin=!!i.memberPermissions?.has(PermissionFlagsBits.Administrator);
    if(i.user.id!==claimerId&&!isAdmin) return i.reply({content:'Only the staff member who claimed this ticket or a Server Administrator can close it.',ephemeral:true});
@@ -775,7 +775,7 @@ client.on('interactionCreate', async i=>{
   if(i.isStringSelectMenu() && i.customId==='chilly_help_category') {
    const pages = {
     aichat:{title:'AI Chat',body:'No AI chat slash command is currently configured in this build.'},
-    antinuke:{title:'AntiNuke',body:'`/security` — Configure Chilly security protections. Whitelist management: `/whitelist add_user`, `/whitelist add_channel`, `/whitelist add_role`, `/whitelist remove_user`, `/whitelist remove_channel`, `/whitelist remove_role`, `/whitelist view_users`, `/whitelist view_channels`, `/whitelist view_roles`.'},
+    antinuke:{title:'AntiNuke',body:'`/security` — Configure NEXORA security protections. Whitelist management: `/whitelist add_user`, `/whitelist add_channel`, `/whitelist add_role`, `/whitelist remove_user`, `/whitelist remove_channel`, `/whitelist remove_role`, `/whitelist view_users`, `/whitelist view_channels`, `/whitelist view_roles`.'},
     automod:{title:'Automod',body:'Automod commands are not currently configured in this build.'},
     credits:{title:'Credits',body:'`/balance` · `/daily` · `/work` · `/slots` · `/pay` · `/leaderboard` · `/shop` · `/buy` · `/inventory` · `/money`'},
     giveawaycog:{title:'GiveawayCog',body:'`/gstart` · `/gend` · `/greroll`'},
@@ -793,7 +793,7 @@ client.on('interactionCreate', async i=>{
     welcomer:{title:'Welcomer',body:'`/welcome-setup` — Set the welcome channel and message. Placeholders: `{user}` and `{server}`.'}
    };
    const page=pages[i.values[0]]||pages.misc;
-   return i.update({embeds:[new EmbedBuilder().setColor(0x77DDE7).setAuthor({name:'Chilly • Help Center',iconURL:client.user.displayAvatarURL()}).setTitle(' '+page.title).setDescription(' '+page.body).setFooter({text:'Chilly Bot • Select another category below'})]});
+   return i.update({embeds:[new EmbedBuilder().setColor(0x77DDE7).setAuthor({name:'NEXORA • Help Center',iconURL:client.user.displayAvatarURL()}).setTitle(' '+page.title).setDescription(' '+page.body).setFooter({text:'NEXORA Bot • Select another category below'})]});
   }
   if(!i.isChatInputCommand()) return;
   const c=i.commandName, u=i.user, g=i.guild;
@@ -814,7 +814,7 @@ Message: ${message}`:''}`,ephemeral:true});
    const sub=i.options.getSubcommand();
    if(sub==='add') {
     const level=i.options.getInteger('level',true), role=i.options.getRole('role',true);
-    if(role.id===g.id||role.managed||role.position>=g.members.me.roles.highest.position) return i.reply({content:'<:3660:1568843631857635418> I cannot assign that role. Move Chilly’s highest role above the reward role.',ephemeral:true});
+    if(role.id===g.id||role.managed||role.position>=g.members.me.roles.highest.position) return i.reply({content:'<:3660:1568843631857635418> I cannot assign that role. Move NEXORA’s highest role above the reward role.',ephemeral:true});
     db.prepare('INSERT INTO leveling_rewards(guild,level,role) VALUES(?,?,?) ON CONFLICT(guild,level) DO UPDATE SET role=excluded.role').run(g.id,level,role.id);
     return i.reply({content:`<:3682:1568843729287258123> ${role} will be awarded when a member reaches **Level ${level}**.`,ephemeral:true});
    }
@@ -947,14 +947,14 @@ Message: ${message}`:''}`,ephemeral:true});
    if(!/^\d{17,20}$/.test(sourceId)) return i.reply({content:'Please provide a valid source server ID.',ephemeral:true});
    if(sourceId===g.id) return i.reply({content:'Source and destination servers cannot be the same.',ephemeral:true});
    const source=await client.guilds.fetch(sourceId).catch(()=>null);
-   if(!source) return i.reply({content:'<:3660:1568843631857635418> Chilly must be a member of the source server. Check the server ID and invite Chilly to that server first.',ephemeral:true});
+   if(!source) return i.reply({content:'<:3660:1568843631857635418> NEXORA must be a member of the source server. Check the server ID and invite NEXORA to that server first.',ephemeral:true});
    const [roles,channels]=await Promise.all([source.roles.fetch(),source.channels.fetch()]);
    const roleCount=[...roles.values()].filter(r=>r.id!==source.id&&!r.managed).length;
    const channelList=[...channels.values()].filter(ch=>!ch.isThread());
    const categoryCount=channelList.filter(ch=>ch.type===ChannelType.GuildCategory).length;
    const channelCount=channelList.length-categoryCount;
    const row=new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`chilly_servercopy_confirm:${source.id}`).setLabel('Confirm Copy').setEmoji('📋').setStyle(ButtonStyle.Danger),new ButtonBuilder().setCustomId('chilly_servercopy_cancel').setLabel('Cancel').setStyle(ButtonStyle.Secondary));
-   return i.reply({content:`**Server copy preview**\nSource: **${source.name}** (\`${source.id}\`)\nDestination: **${g.name}**\n• Roles (excluding @everyone and managed roles): **${roleCount}**\n• Categories: **${categoryCount}**\n• Channels: **${channelCount}**\n• Role permissions and channel permission overwrites: **Included**\n\nChilly will create these in the destination without deleting existing roles or channels. Member-specific overwrites are copied only for members already in the destination server. Confirm to continue.`,components:[row],ephemeral:true});
+   return i.reply({content:`**Server copy preview**\nSource: **${source.name}** (\`${source.id}\`)\nDestination: **${g.name}**\n• Roles (excluding @everyone and managed roles): **${roleCount}**\n• Categories: **${categoryCount}**\n• Channels: **${channelCount}**\n• Role permissions and channel permission overwrites: **Included**\n\nNEXORA will create these in the destination without deleting existing roles or channels. Member-specific overwrites are copied only for members already in the destination server. Confirm to continue.`,components:[row],ephemeral:true});
   }
   if(c==='ticket-setup') {
    if(!i.memberPermissions?.has(PermissionFlagsBits.Administrator)) return i.reply({content:'<:3671:1568843665626103838> Only members with Administrator permission can configure tickets.',ephemeral:true});
@@ -1012,7 +1012,7 @@ Logs: <#${log.id}>`,ephemeral:true});
     {label:'aichat',description:'AI chat commands',value:'aichat',emoji:red},
     {label:'AntiNuke',description:'Security and whitelist tools',value:'antinuke',emoji:red},
     {label:'Automod',description:'Automatic moderation',value:'automod',emoji:red},
-    {label:'Credits',description:'Chilly Coins and economy',value:'credits',emoji:red},
+    {label:'Credits',description:'NexCoins and economy',value:'credits',emoji:red},
     {label:'GiveawayCog',description:'Giveaway tools',value:'giveawaycog',emoji:red},
     {label:'jail',description:'Jail tools',value:'jail',emoji:red},
     {label:'Logs',description:'Server logs',value:'logs',emoji:red},
@@ -1026,7 +1026,7 @@ Logs: <#${log.id}>`,ephemeral:true});
     {label:'utility',description:'Utility commands',value:'utility',emoji:red},
     {label:'Welcomer',description:'Welcome tools',value:'welcomer',emoji:red}
    );
-   return i.reply({embeds:[new EmbedBuilder().setColor(0x77DDE7).setAuthor({name:'Chilly • Help Center',iconURL:client.user.displayAvatarURL()}).setTitle(' Chilly Help').setDescription('Browse all available Chilly commands by category.\n\n **Categories**\nSelect a category below to view its commands.').setFooter({text:'Chilly Bot • Powered by Spidyyy'})],components:[new ActionRowBuilder().addComponents(menu)]});
+   return i.reply({embeds:[new EmbedBuilder().setColor(0x77DDE7).setAuthor({name:'NEXORA • Help Center',iconURL:client.user.displayAvatarURL()}).setTitle(' NEXORA Help').setDescription('Browse all available NEXORA commands by category.\n\n **Categories**\nSelect a category below to view its commands.').setFooter({text:'NEXORA Bot • Powered by Spidyyy'})],components:[new ActionRowBuilder().addComponents(menu)]});
   }
   if(c==='balance') {
    const who=target||u, a=account(g.id,who.id);
@@ -1034,12 +1034,12 @@ Logs: <#${log.id}>`,ephemeral:true});
   }
   if(c==='slots') {
    const bet=i.options.getInteger('bet'), a=account(g.id,u.id);
-   if(a.coins<bet) return i.reply({content:'Not enough Chilly Coins for that bet.',ephemeral:true});
+   if(a.coins<bet) return i.reply({content:'Not enough NexCoins for that bet.',ephemeral:true});
    const symbols=['🍒','🍋','🍇','⭐','🔔']; const roll=[0,1,2].map(()=>symbols[Math.floor(Math.random()*symbols.length)]);
    let multiplier=roll[0]===roll[1]&&roll[1]===roll[2]? (roll[0]==='⭐'?5:3) : (roll[0]===roll[1]||roll[1]===roll[2]||roll[0]===roll[2]?1:0);
    const delta=multiplier?bet*multiplier: -bet;
    db.prepare('UPDATE global_users SET coins=coins+? WHERE user=?').run(delta,u.id);
-   return i.reply('🎰 **Chilly Slots**\n'+roll.join(' | ')+'\n'+(multiplier?'🎉 You won **'+money(bet*multiplier)+'**!':'😢 You lost **'+money(bet)+'**.')+'\nBalance: **'+money(account(g.id,u.id).coins)+'**');
+   return i.reply('🎰 **NEXORA Slots**\n'+roll.join(' | ')+'\n'+(multiplier?'🎉 You won **'+money(bet*multiplier)+'**!':'😢 You lost **'+money(bet)+'**.')+'\nBalance: **'+money(account(g.id,u.id).coins)+'**');
   }
   if(c==='invites') {
    const who=target||u, row=db.prepare('SELECT invites FROM invite_counts WHERE guild=? AND user=?').get(g.id,who.id);
@@ -1066,14 +1066,14 @@ Logs: <#${log.id}>`,ephemeral:true});
     db.prepare('UPDATE global_users SET coins=coins-? WHERE user=?').run(amount,u.id);
     db.prepare('UPDATE global_users SET coins=coins+? WHERE user=?').run(amount,to.id);
    })();
-   return i.reply('💳 | **<@'+u.id+'>** sent **'+amount.toLocaleString('en-US')+' Chilly Coins** to **<@'+to.id+'>**!');
+   return i.reply('💳 | **<@'+u.id+'>** sent **'+amount.toLocaleString('en-US')+' NexCoins** to **<@'+to.id+'>**!');
   }
   if(c==='leaderboard') {
    const rows=db.prepare('SELECT user,coins FROM global_users ORDER BY coins DESC LIMIT 10').all();
    return i.reply({embeds:[new EmbedBuilder().setTitle('<:3681:1568843725591814194> Coin Leaderboard')
     .setDescription(rows.map((r,n)=>(n+1)+'. <@'+r.user+'> — '+money(r.coins)).join('\n')||'No users yet.') ]});
   }
-  if(c==='shop') return i.reply('🛍️ **Chilly Shop**\n🍪 Cookie: 100\n☕ Coffee: 250\n👑 Golden Crown: 1000 coins\nUse `/buy`.');
+  if(c==='shop') return i.reply('🛍️ **NEXORA Shop**\n🍪 Cookie: 100\n☕ Coffee: 250\n👑 Golden Crown: 1000 coins\nUse `/buy`.');
   if(c==='buy') {
    const item=i.options.getString('item'), price={'Cookie':100,'Coffee':250,'Golden Crown':1000}[item], a=account(g.id,u.id);
    if(a.coins<price) return i.reply({content:'Not enough coins.',ephemeral:true});
@@ -1116,11 +1116,11 @@ Logs: <#${log.id}>`,ephemeral:true});
    settings(g.id);
    db.prepare(`UPDATE guild_settings SET ${feature}=? WHERE guild=?`).run(enabled?1:0,g.id);
    const names={antinuke:'Anti-nuke alerts',antiraid:'Anti-raid alerts',antilink:'Anti-link',antispam:'Anti-spam',antiabuse:'Anti-abuse'};
-   return i.reply({embeds:[new EmbedBuilder().setColor(enabled?0x2ECC71:0xE74C3C).setTitle('❄️ Chilly Security Settings').setDescription(`${enabled?'<:3682:1568843729287258123> Enabled':'<:3660:1568843631857635418> Disabled'} **${names[feature]}**.`).setFooter({text:'Chilly Security'}).setTimestamp()],ephemeral:true});
+   return i.reply({embeds:[new EmbedBuilder().setColor(enabled?0x2ECC71:0xE74C3C).setTitle('🛡️ NEXORA Security Settings').setDescription(`${enabled?'<:3682:1568843729287258123> Enabled':'<:3660:1568843631857635418> Disabled'} **${names[feature]}**.`).setFooter({text:'NEXORA Security'}).setTimestamp()],ephemeral:true});
   }
   if(c==='warn') {
    const to=i.options.getUser('user'), reason=i.options.getString('reason')||'No reason provided';
-   if(to.id===TRUSTED_OWNER_ID) return i.reply({content:'<:3667:1568843654410534984> This user is protected. Chilly cannot warn this account.',ephemeral:true});
+   if(to.id===TRUSTED_OWNER_ID) return i.reply({content:'<:3667:1568843654410534984> This user is protected. NEXORA cannot warn this account.',ephemeral:true});
    let dmDone=false;
    try { await to.send({embeds:[moderationEmbed({title:'You have been warned!',targetName:`${to.tag}`,targetId:to.id,moderator:`${u.tag}`,reason,avatar:to.displayAvatarURL()})]}); dmDone=true; } catch {}
    db.prepare('INSERT INTO warnings(guild,user,moderator,reason,created) VALUES(?,?,?,?,?)').run(g.id,to.id,u.id,reason,Date.now());
@@ -1140,7 +1140,7 @@ Logs: <#${log.id}>`,ephemeral:true});
   }
   if(c==='timeout'||c==='untimeout') {
    const to=i.options.getUser('user');
-   if(to.id===TRUSTED_OWNER_ID) return i.reply({content:'<:3667:1568843654410534984> This user is protected. Chilly cannot mute or unmute this account.',ephemeral:true});
+   if(to.id===TRUSTED_OWNER_ID) return i.reply({content:'<:3667:1568843654410534984> This user is protected. NEXORA cannot mute or unmute this account.',ephemeral:true});
    const m=await g.members.fetch(to.id);
    if(to.id===u.id) return i.reply({content:'You cannot moderate yourself.',ephemeral:true});
    if(c==='timeout') {
@@ -1162,7 +1162,7 @@ Logs: <#${log.id}>`,ephemeral:true});
   }
   if(c==='kick'||c==='ban') {
    const to=i.options.getUser('user'), reason=i.options.getString('reason')||'No reason provided';
-   if(to.id===TRUSTED_OWNER_ID) return i.reply({content:'<:3667:1568843654410534984> This user is protected. Chilly cannot kick or ban this account.',ephemeral:true});
+   if(to.id===TRUSTED_OWNER_ID) return i.reply({content:'<:3667:1568843654410534984> This user is protected. NEXORA cannot kick or ban this account.',ephemeral:true});
    const m=await g.members.fetch(to.id);
    if(to.id===u.id) return i.reply({content:'You cannot moderate yourself.',ephemeral:true});
    let dmDone=false;
@@ -1281,7 +1281,7 @@ Logs: <#${log.id}>`,ephemeral:true});
    let added=0, failed=0;
    for(const member of targets.values()) {
     if(member.roles.cache.has(role.id) || member.id===g.members.me.id) continue;
-    try { await member.roles.add(role,'Bulk role assignment by Chilly'); added++; }
+    try { await member.roles.add(role,'Bulk role assignment by NEXORA'); added++; }
     catch { failed++; }
    }
    return i.editReply(`<:3682:1568843729287258123> Finished. Added ${role} to **${added}** ${type==='bot'?'bot':'human'} member(s).${failed?` Failed: **${failed}**.`:''}`);
@@ -1417,7 +1417,7 @@ client.on('guildMemberRemove', async member => {
 client.on('guildMemberAdd', async member => {
  try {
   const roleId=db.prepare('SELECT value FROM chilly_config WHERE guild=? AND key=?').get(member.guild.id,'autorole')?.value;
-  if(roleId) { const role=await member.guild.roles.fetch(roleId).catch(()=>null); const botMember=member.guild.members.me; if(role && !role.managed && role.position<botMember.roles.highest.position && botMember.permissions.has(PermissionFlagsBits.ManageRoles)) await member.roles.add(role,'Configured Chilly auto-role'); }
+  if(roleId) { const role=await member.guild.roles.fetch(roleId).catch(()=>null); const botMember=member.guild.members.me; if(role && !role.managed && role.position<botMember.roles.highest.position && botMember.permissions.has(PermissionFlagsBits.ManageRoles)) await member.roles.add(role,'Configured NEXORA auto-role'); }
  } catch(error) { console.error('Auto-role failed:',error.message); }
  const cfg=settings(member.guild.id);
  if(!cfg.antiraid) return;
@@ -1510,7 +1510,7 @@ client.on('messageCreate', async message => {
  }
 });
 
-// DM a welcome embed to the member who added Chilly to a server.
+// DM a welcome embed to the member who added NEXORA to a server.
 client.on('guildCreate', async guild => {
  try {
   // Discord records the person who added the bot in the server audit log.
@@ -1530,8 +1530,8 @@ client.on('guildCreate', async guild => {
     `I can help with your server's **leveling, global economy, moderation, security, giveaways, tickets, welcome messages, autoroles, reaction roles, invite tracking, and utility commands**.\n\n` +
     `Use **/help** to explore my commands and get started!`
    )
-   .addFields({ name: 'Need help?', value: '[Join the Chilly Support Server](https://discord.gg/TFVrsdNWGx)' })
-   .setFooter({ text: `${guild.name} • Thanks for choosing Chilly!` })
+   .addFields({ name: 'Need help?', value: '[Join the NEXORA Support Server](https://discord.gg/TFVrsdNWGx)' })
+   .setFooter({ text: `${guild.name} • Thanks for choosing NEXORA!` })
    .setTimestamp();
 
   const row = new ActionRowBuilder().addComponents(
@@ -1542,7 +1542,7 @@ client.on('guildCreate', async guild => {
   );
   await recipient.send({ embeds: [embed], components: [row] });
  } catch (error) {
-  console.error(`Could not send Chilly welcome DM for ${guild.id}:`, error.message);
+  console.error(`Could not send NEXORA welcome DM for ${guild.id}:`, error.message);
  }
 });
 
