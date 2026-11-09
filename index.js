@@ -15,7 +15,7 @@ if (!TOKEN || !CLIENT_ID) {
   console.error('Missing DISCORD_TOKEN or CLIENT_ID.');
   process.exit(1);
 }
-const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers, GatewayIntentBits.GuildInvites, GatewayIntentBits.GuildMessages, GatewayIntentBits.GuildMessageReactions, GatewayIntentBits.MessageContent], partials: [Partials.Message, Partials.Channel, Partials.Reaction] });
+const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers, GatewayIntentBits.GuildMessages, GatewayIntentBits.GuildMessageReactions, GatewayIntentBits.MessageContent], partials: [Partials.Message, Partials.Channel, Partials.Reaction] });
 const db = new Database('nexora-rp.sqlite');
 db.exec(`CREATE TABLE IF NOT EXISTS chilly_config (guild TEXT NOT NULL, key TEXT NOT NULL, value TEXT, PRIMARY KEY(guild,key))`);
 db.exec(`CREATE TABLE IF NOT EXISTS ticket_buttons (guild TEXT NOT NULL, ticket_key TEXT NOT NULL, label TEXT NOT NULL, emoji TEXT, staff_role TEXT NOT NULL, log_channel TEXT NOT NULL, PRIMARY KEY(guild,ticket_key))`);
@@ -50,7 +50,6 @@ CREATE TABLE IF NOT EXISTS autoreactions (guild TEXT NOT NULL, trigger TEXT NOT 
 CREATE TABLE IF NOT EXISTS reaction_roles (
  guild TEXT NOT NULL, channel TEXT NOT NULL, message TEXT NOT NULL, emoji_key TEXT NOT NULL, emoji_input TEXT NOT NULL, role TEXT NOT NULL, PRIMARY KEY(guild,message,emoji_key)
 );
-CREATE TABLE IF NOT EXISTS invite_counts (guild TEXT, user TEXT, invites INTEGER DEFAULT 0, PRIMARY KEY(guild,user));
 CREATE TABLE IF NOT EXISTS guild_settings (
  guild TEXT PRIMARY KEY, log_channel TEXT, antinuke INTEGER DEFAULT 0, antiraid INTEGER DEFAULT 0, antilink INTEGER DEFAULT 0, antispam INTEGER DEFAULT 0, antiabuse INTEGER DEFAULT 0
 );
@@ -144,9 +143,6 @@ const commands = [
  new SlashCommandBuilder().setName('unjail').setDescription('Release a jailed member')
   .setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers)
   .addUserOption(o=>o.setName('user').setDescription('Member to release').setRequired(true)),
- new SlashCommandBuilder().setName('play').setDescription('Play audio from a YouTube URL')
-  .addStringOption(o=>o.setName('url').setDescription('YouTube video URL').setRequired(true)),
- ...['skip','pause','resume','stop','queue','leave'].map(n=>new SlashCommandBuilder().setName(n).setDescription(({skip:'Skip current track',pause:'Pause music',resume:'Resume music',stop:'Stop music and clear queue',queue:'Show music queue',leave:'Leave voice channel'})[n])),
  new SlashCommandBuilder().setName('ping').setDescription('Check bot latency'),
  new SlashCommandBuilder().setName('about-me').setDescription('Learn about NEXORA RP'),
  new SlashCommandBuilder().setName('help').setDescription('Show all commands'),
@@ -182,9 +178,6 @@ const commands = [
  new SlashCommandBuilder().setName('work').setDescription('Earn coins by working'),
  new SlashCommandBuilder().setName('slots').setDescription('Bet NexCoins on the slot machine')
   .addIntegerOption(o=>o.setName('bet').setDescription('Coins to bet').setMinValue(1).setMaxValue(1000000).setRequired(true)),
- new SlashCommandBuilder().setName('invites').setDescription('Check your tracked invites')
-  .addUserOption(o=>o.setName('user').setDescription('Member to check')),
- new SlashCommandBuilder().setName('invites-leaderboard').setDescription('Top inviters in this server'),
  new SlashCommandBuilder().setName('pay').setDescription('Pay NexCoins to a member')
   .addUserOption(o=>o.setName('user').setDescription('Recipient').setRequired(true))
   .addIntegerOption(o=>o.setName('amount').setDescription('Amount').setMinValue(1).setRequired(true)),
@@ -338,7 +331,7 @@ function account(g,u) {
  db.prepare('INSERT OR IGNORE INTO global_users(user) VALUES(?)').run(u);
  return db.prepare('SELECT * FROM global_users WHERE user=?').get(u);
 }
-function money(n) { return n.toLocaleString('en-US')+' 💷 NexCoins'; }
+function money(n) { return `${CUSTOM_EMOJI.gem} ${n.toLocaleString('en-US')} NexCoins`; }
 function choose(a,n) {
  const x=[...a], r=[];
  while(x.length&&r.length<n) r.push(x.splice(Math.floor(Math.random()*x.length),1)[0]);
@@ -357,24 +350,24 @@ async function endGiveaway(id, reroll=false) {
    if(g.message) {
     const m=await ch.messages.fetch(g.message).catch(()=>null);
     if(m) await m.edit({
-     embeds:[new EmbedBuilder().setTitle('🎉 Giveaway Ended')
+     embeds:[new EmbedBuilder().setTitle(`${CUSTOM_EMOJI.gift} Giveaway Ended`)
       .setDescription('Prize: '+g.prize+'\nWinners: '+(winners.map(x=>'<@'+x+'>').join(', ')||'No entries')+'\nID: '+id)],
      components:[]
     }).catch(()=>{});
    }
    if(winners.length) {
     await ch.send({
-     content:'🎉 '+NEXORA_EMOJI.gift+' Congratulations '+winners.map(x=>'<@'+x+'>').join(', ')+'! You won **'+g.prize+'**!\n'+NEXORA_EMOJI.gift+' Open a ticket to claim the reward!',
+     content:CUSTOM_EMOJI.star+' '+NEXORA_EMOJI.gift+' Congratulations '+winners.map(x=>'<@'+x+'>').join(', ')+'! You won **'+g.prize+'**!\n'+NEXORA_EMOJI.gift+' Open a ticket to claim the reward!',
      allowedMentions:{users:winners}
     }).catch(()=>{});
    } else {
-    await ch.send('Giveaway ended with no entries.').catch(()=>{});
+    await ch.send(CUSTOM_EMOJI.warning+' Giveaway ended with no entries.').catch(()=>{});
    }
   }
  } else {
   const ch=await client.channels.fetch(g.channel).catch(()=>null);
   if(ch && winners.length) await ch.send({
-   content:'🎉 '+NEXORA_EMOJI.gift+' New giveaway winner(s): '+winners.map(x=>'<@'+x+'>').join(', ')+'! Prize: **'+g.prize+'**.\n'+NEXORA_EMOJI.gift+' Open a ticket to claim the reward!',
+   content:CUSTOM_EMOJI.star+' '+NEXORA_EMOJI.gift+' New giveaway winner(s): '+winners.map(x=>'<@'+x+'>').join(', ')+'! Prize: **'+g.prize+'**.\n'+NEXORA_EMOJI.gift+' Open a ticket to claim the reward!',
    allowedMentions:{users:winners}
   }).catch(()=>{});
  }
@@ -382,7 +375,7 @@ async function endGiveaway(id, reroll=false) {
  for(const winnerId of winners) {
   const user=await client.users.fetch(winnerId).catch(()=>null);
   if(user) await user.send({
-   content:'🎉 You Won the giveaway! <@'+winnerId+'>\n'+NEXORA_EMOJI.gift+' Prize: **'+g.prize+'**\n'+NEXORA_EMOJI.gift+' Open a ticket to claim the reward!',
+   content:CUSTOM_EMOJI.trophy+' You Won the giveaway! <@'+winnerId+'>\n'+NEXORA_EMOJI.gift+' Prize: **'+g.prize+'**\n'+NEXORA_EMOJI.gift+' Open a ticket to claim the reward!',
    allowedMentions:{users:[winnerId]}
   }).catch(()=>{});
  }
@@ -471,7 +464,7 @@ const NEXORA_EMOJI = {
  moderator: '<:3667:1568843654410534984>',
  member: '<:3689:1568843757380698232>',
  dot: '<:3669:1568843659963662456>',
- gift: '🎁',
+ gift: '<:3646:1568843035549372426>',
  success: '<:3682:1568843729287258123>',
  rejected: '<:3660:1568843631857635418>',
  admin: '<:3667:1568843654410534984>',
@@ -583,7 +576,7 @@ async function applyReactionRole(reaction, user, addRole) {
 client.on('messageReactionAdd', (reaction, user) => applyReactionRole(reaction, user, true));
 client.on('messageReactionRemove', (reaction, user) => applyReactionRole(reaction, user, false));
 
-const GIVEAWAY_EMOJI_ID = '1568843733351403560';
+const GIVEAWAY_EMOJI_ID = '1568843733351403560'; // Custom star emoji (3683)
 async function handleGiveawayReaction(reaction, user, add) {
  try {
   if (!user || user.bot) return;
@@ -785,26 +778,19 @@ client.on('interactionCreate', async i=>{
   }
   if(i.isStringSelectMenu() && i.customId==='chilly_help_category') {
    const pages = {
-    aichat:{title:'AI Chat',body:'No AI chat slash command is currently configured in this build.'},
     antinuke:{title:'AntiNuke',body:'`/security` — Configure NEXORA security protections. Whitelist management: `/whitelist add_user`, `/whitelist add_channel`, `/whitelist add_role`, `/whitelist remove_user`, `/whitelist remove_channel`, `/whitelist remove_role`, `/whitelist view_users`, `/whitelist view_channels`, `/whitelist view_roles`.'},
-    automod:{title:'Automod',body:'Automod commands are not currently configured in this build.'},
-    credits:{title:'Credits',body:'`/balance` · `/daily` · `/work` · `/slots` · `/pay` · `/leaderboard` · `/shop` · `/buy` · `/inventory` · `/money`'},
-    giveawaycog:{title:'GiveawayCog',body:'`/gstart` · `/gend` · `/greroll`'},
+    credits:{title:`${CUSTOM_EMOJI.gem} Credits`,body:`${CUSTOM_EMOJI.gem} \`/balance\` · ${CUSTOM_EMOJI.trophy} \`/daily\` · ${CUSTOM_EMOJI.hand} \`/work\` · ${CUSTOM_EMOJI.star} \`/slots\` · ${CUSTOM_EMOJI.hand} \`/pay\` · ${CUSTOM_EMOJI.chart} \`/leaderboard\` · ${CUSTOM_EMOJI.crown_gold} \`/shop\` · ${CUSTOM_EMOJI.plus} \`/buy\` · ${CUSTOM_EMOJI.stack} \`/inventory\` · ${CUSTOM_EMOJI.shield_purple} \`/money\``},
+    giveawaycog:{title:`${CUSTOM_EMOJI.gift} Giveaways`,body:`${CUSTOM_EMOJI.gift} \`/gstart\` · ${CUSTOM_EMOJI.clock} \`/gend\` · ${CUSTOM_EMOJI.star} \`/greroll\``},
     jail:{title:'Jail',body:'`/jail-setup` · `/jail` · `/unjail`'},
     logs:{title:'Logs',body:'`/setlogs` — Configure the server log channel.'},
     misc:{title:'Misc',body:'`/ping` · `/help` · `/say` · `/8ball` · `/coinflip` · `/dice` · `/rps` · `/joke` · `/ship` · `/poll` · `/remind`'},
-    moderation:{title:'Moderation',body:'⚠️ `/warn` · 📋 `/warnings` · 🧹 `/clear` · 🔇 `/timeout` · 🔊 `/untimeout` · 👢 `/kick` · 🔨 `/ban` · 🔓 `/unban`. Each command requires its relevant Discord permission.'},
-    np:{title:'NP',body:'No NP commands are currently configured in this build.'},
-    reqrolecog:{title:'ReqRoleCog',body:'Role-request commands are not currently configured in this build.'},
-    reset:{title:'Reset',body:'No reset command is currently configured in this build.'},
-    responders:{title:'Responders',body:'Responder commands are not currently configured in this build.'},
+    moderation:{title:`${CUSTOM_EMOJI.shield} Moderation`,body:`${CUSTOM_EMOJI.warning} \`/warn\` · ${CUSTOM_EMOJI.member_alert} \`/warnings\` · ${CUSTOM_EMOJI.brush} \`/clear\` · ${CUSTOM_EMOJI.lock_red} \`/timeout\` · ${CUSTOM_EMOJI.lock} \`/untimeout\` · ${CUSTOM_EMOJI.member} \`/kick\` · ${CUSTOM_EMOJI.shield_red} \`/ban\` · ${CUSTOM_EMOJI.shield_green} \`/unban\`. Each command requires its relevant Discord permission.`},
     tickets:{title:'Tickets',body:'`/ticket-setup` — Customize panel channel, title, description and support role. Use the Create Ticket button to open private tickets.'},
     utility:{title:'Utility',body:'`/avatar` · `/userinfo` · `/serverinfo` · `/calculator`'},
-    vchelp:{title:'VC Help',body:'Music commands registered: `/play` · `/skip` · `/pause` · `/resume` · `/stop` · `/queue` · `/leave`. YouTube playback still needs voice provider integration.'},
     welcomer:{title:'Welcomer',body:'`/welcome-setup` — Set the welcome channel and message. Placeholders: `{user}` and `{server}`.'}
    };
    const page=pages[i.values[0]]||pages.misc;
-   return i.update({embeds:[new EmbedBuilder().setColor(0x77DDE7).setAuthor({name:'NEXORA • Help Center',iconURL:client.user.displayAvatarURL()}).setTitle(' '+page.title).setDescription(' '+page.body).setFooter({text:'NEXORA Bot • Select another category below'})]});
+   return i.update({embeds:[new EmbedBuilder().setColor(0x77DDE7).setAuthor({name:'NEXORA • Help Center',iconURL:client.user.displayAvatarURL()}).setTitle(page.title).setDescription(page.body).setFooter({text:'NEXORA Bot • Select another category below'})]});
   }
   if(!i.isChatInputCommand()) return;
   const c=i.commandName, u=i.user, g=i.guild;
@@ -957,7 +943,7 @@ Message: ${message}`:''}`,ephemeral:true});
    account(g.id,to.id);
    db.prepare('UPDATE global_users SET coins=coins+? WHERE user=?').run(amount,to.id);
    const updated=account(g.id,to.id);
-   return i.reply('💰 Added **'+money(amount)+'** to <@'+to.id+'>. New balance: **'+money(updated.coins)+'**.');
+   return i.reply(CUSTOM_EMOJI.plus+' Added **'+money(amount)+'** to <@'+to.id+'>. New balance: **'+money(updated.coins)+'**.');
   }
   if(c==='server-copy') {
    const allowed=u.id===g.ownerId || !!i.memberPermissions?.has(PermissionFlagsBits.Administrator) || !!i.memberPermissions?.has(PermissionFlagsBits.ManageGuild);
@@ -1023,88 +1009,77 @@ Logs: <#${log.id}>`,ephemeral:true});
    if(c==='jail') { await member.roles.add(role, i.options.getString('reason')||'Jailed by moderator'); return i.reply('<:3675:1568843679073042544> '+user.tag+' has been jailed.'); }
    await member.roles.remove(role,'Released from jail'); return i.reply('<:3671:1568843665626103838> '+user.tag+' has been released.');
   }
-  if(['play','skip','pause','resume','stop','queue','leave'].includes(c)) return i.reply({content:'🎵 Music playback needs the voice dependencies installed and a compatible YouTube stream provider. This command is registered, but playback is not enabled in this package yet.',ephemeral:true});
   if(c==='ping') return i.reply('🏓 Pong! '+client.ws.ping+'ms');
   if(c==='help') {
-   const red={id:'1565221545453027339',name:'Redtick'};
+   const categoryEmoji = { bot:{id:'1568843040259579965',name:'3648'}, shield:{id:'1568843654410534984',name:'3667'}, settings:{id:'1568843018897723402',name:'3639'}, gem:{id:'1568843721955614870',name:'3680'}, gift:{id:'1568843035549372426',name:'3646'}, member:{id:'1568843757380698232',name:'3689'}, chart:{id:'1568843691588849784',name:'3655'}, chat:{id:'1568843675339984946',name:'3674'}, wrench:{id:'1568843003064488007',name:'3633'}, server:{id:'1568843023465324564',name:'3641'}, crown:{id:'1568843746748010497',name:'3686'}, lock:{id:'1568843679073042544',name:'3675'}, member_add:{id:'1568843663151341770',name:'3670'} };
    const menu=new StringSelectMenuBuilder().setCustomId('chilly_help_category').setPlaceholder('Select category').addOptions(
-    {label:'aichat',description:'AI chat commands',value:'aichat',emoji:red},
-    {label:'AntiNuke',description:'Security and whitelist tools',value:'antinuke',emoji:red},
-    {label:'Automod',description:'Automatic moderation',value:'automod',emoji:red},
-    {label:'Credits',description:'NexCoins and economy',value:'credits',emoji:red},
-    {label:'GiveawayCog',description:'Giveaway tools',value:'giveawaycog',emoji:red},
-    {label:'jail',description:'Jail tools',value:'jail',emoji:red},
-    {label:'Logs',description:'Server logs',value:'logs',emoji:red},
-    {label:'Misc',description:'General and fun commands',value:'misc',emoji:red},
-    {label:'Moderation',description:'Moderation commands',value:'moderation',emoji:red},
-    {label:'np',description:'NP commands',value:'np',emoji:red},
-    {label:'ReqRoleCog',description:'Role requests',value:'reqrolecog',emoji:red},
-    {label:'Reset',description:'Reset tools',value:'reset',emoji:red},
-    {label:'Responders',description:'Automatic responders',value:'responders',emoji:red},
-    {label:'tickets',description:'Ticket tools',value:'tickets',emoji:red},
-    {label:'utility',description:'Utility commands',value:'utility',emoji:red},
-    {label:'Welcomer',description:'Welcome tools',value:'welcomer',emoji:red}
+    {label:'AntiNuke',description:'Security and whitelist tools',value:'antinuke',emoji:categoryEmoji.shield},
+    {label:'Automod',description:'Automatic moderation',value:'automod',emoji:categoryEmoji.settings},
+    {label:'Credits',description:'NexCoins and economy',value:'credits',emoji:categoryEmoji.gem},
+    {label:'GiveawayCog',description:'Giveaway tools',value:'giveawaycog',emoji:categoryEmoji.gift},
+    {label:'jail',description:'Jail tools',value:'jail',emoji:categoryEmoji.lock},
+    {label:'Logs',description:'Server logs',value:'logs',emoji:categoryEmoji.chart},
+    {label:'Misc',description:'General and fun commands',value:'misc',emoji:categoryEmoji.chat},
+    {label:'Moderation',description:'Moderation commands',value:'moderation',emoji:categoryEmoji.shield},
+    {label:'ReqRoleCog',description:'Role requests',value:'reqrolecog',emoji:categoryEmoji.member_add},
+    {label:'Reset',description:'Reset tools',value:'reset',emoji:categoryEmoji.settings},
+    {label:'Responders',description:'Automatic responders',value:'responders',emoji:categoryEmoji.chat},
+    {label:'tickets',description:'Ticket tools',value:'tickets',emoji:categoryEmoji.gift},
+    {label:'utility',description:'Utility commands',value:'utility',emoji:categoryEmoji.wrench},
+    {label:'Welcomer',description:'Welcome tools',value:'welcomer',emoji:categoryEmoji.member}
    );
-   return i.reply({embeds:[new EmbedBuilder().setColor(0x77DDE7).setAuthor({name:'NEXORA • Help Center',iconURL:client.user.displayAvatarURL()}).setTitle(' NEXORA Help').setDescription('Browse all available NEXORA commands by category.\n\n **Categories**\nSelect a category below to view its commands.').setFooter({text:'NEXORA Bot • Powered by Spidyyy'})],components:[new ActionRowBuilder().addComponents(menu)]});
+   return i.reply({embeds:[new EmbedBuilder().setColor(0x77DDE7).setAuthor({name:'NEXORA • Help Center',iconURL:client.user.displayAvatarURL()}).setTitle(`${CUSTOM_EMOJI.bot} NEXORA Help`).setDescription(`${CUSTOM_EMOJI.dot} Browse all available NEXORA commands by category.\n\n${CUSTOM_EMOJI.settings} **Categories**\n${CUSTOM_EMOJI.chat} Select a category below to view its commands.`).setFooter({text:'NEXORA Bot • Powered by Spidyyy'})],components:[new ActionRowBuilder().addComponents(menu)]});
   }
   if(c==='balance') {
    const who=target||u, a=account(g.id,who.id);
-   return i.reply('💰 **'+who.username+'** has **'+money(a.coins)+'**.');
+   return i.reply(CUSTOM_EMOJI.gem+' **'+who.username+'** has **'+money(a.coins)+'**.');
   }
   if(c==='slots') {
    const bet=i.options.getInteger('bet'), a=account(g.id,u.id);
-   if(a.coins<bet) return i.reply({content:'Not enough NexCoins for that bet.',ephemeral:true});
-   const symbols=['🍒','🍋','🍇','⭐','🔔']; const roll=[0,1,2].map(()=>symbols[Math.floor(Math.random()*symbols.length)]);
-   let multiplier=roll[0]===roll[1]&&roll[1]===roll[2]? (roll[0]==='⭐'?5:3) : (roll[0]===roll[1]||roll[1]===roll[2]||roll[0]===roll[2]?1:0);
+   if(a.coins<bet) return i.reply({content:CUSTOM_EMOJI.warning+' Not enough NexCoins for that bet.',ephemeral:true});
+   const symbols=[CUSTOM_EMOJI.star,CUSTOM_EMOJI.gem,CUSTOM_EMOJI.diamond,CUSTOM_EMOJI.trophy,CUSTOM_EMOJI.crown_gold]; const roll=[0,1,2].map(()=>symbols[Math.floor(Math.random()*symbols.length)]);
+   let multiplier=roll[0]===roll[1]&&roll[1]===roll[2]? (roll[0]===CUSTOM_EMOJI.star?5:3) : (roll[0]===roll[1]||roll[1]===roll[2]||roll[0]===roll[2]?1:0);
    const delta=multiplier?bet*multiplier: -bet;
    db.prepare('UPDATE global_users SET coins=coins+? WHERE user=?').run(delta,u.id);
-   return i.reply('🎰 **NEXORA Slots**\n'+roll.join(' | ')+'\n'+(multiplier?'🎉 You won **'+money(bet*multiplier)+'**!':'😢 You lost **'+money(bet)+'**.')+'\nBalance: **'+money(account(g.id,u.id).coins)+'**');
-  }
-  if(c==='invites') {
-   const who=target||u, row=db.prepare('SELECT invites FROM invite_counts WHERE guild=? AND user=?').get(g.id,who.id);
-   return i.reply('<:3674:1568843675339984946> **'+who.username+'** has **'+(row?.invites||0)+'** tracked invites.\nNote: tracking starts after this version is online; old invite history cannot be recovered.');
-  }
-  if(c==='invites-leaderboard') {
-   const rows=db.prepare('SELECT user,invites FROM invite_counts WHERE guild=? ORDER BY invites DESC LIMIT 10').all(g.id);
-   return i.reply({embeds:[new EmbedBuilder().setColor(0x77DDE7).setTitle('<:3674:1568843675339984946> Invite Leaderboard').setDescription(rows.map((r,n)=>(n+1)+'. <@'+r.user+'> — **'+r.invites+'** invites').join('\n')||'No tracked invites yet.')]});
+   return i.reply(CUSTOM_EMOJI.star+' **NEXORA Slots**\n'+roll.join(' | ')+'\n'+(multiplier?CUSTOM_EMOJI.success+' You won **'+money(bet*multiplier)+'**!':CUSTOM_EMOJI.close+' You lost **'+money(bet)+'**.')+'\n'+CUSTOM_EMOJI.gem+' Balance: **'+money(account(g.id,u.id).coins)+'**');
   }
   if(c==='daily'||c==='work') {
    const a=account(g.id,u.id), now=Math.floor(Date.now()/1000);
    const col=c==='daily'?'daily':'worked', cd=c==='daily'?86400:3600;
    const amount=c==='daily'?500:Math.floor(Math.random()*201)+100;
-   if(now-a[col]<cd) return i.reply({content:'Try again in '+Math.ceil((cd-(now-a[col]))/60)+' minutes.',ephemeral:true});
+   if(now-a[col]<cd) return i.reply({content:CUSTOM_EMOJI.clock+' Try again in '+Math.ceil((cd-(now-a[col]))/60)+' minutes.',ephemeral:true});
    db.prepare('UPDATE global_users SET coins=coins+?, '+col+'=? WHERE user=?').run(amount,now,u.id);
-   return i.reply('❄️ You earned **'+money(amount)+'**!');
+   return i.reply(CUSTOM_EMOJI.trophy+' You earned **'+money(amount)+'**!');
   }
   if(c==='pay') {
    const to=i.options.getUser('user'), amount=i.options.getInteger('amount');
-   if(to.bot||to.id===u.id) return i.reply({content:'Choose another non-bot member.',ephemeral:true});
+   if(to.bot||to.id===u.id) return i.reply({content:CUSTOM_EMOJI.warning+' Choose another non-bot member.',ephemeral:true});
    const a=account(g.id,u.id); account(g.id,to.id);
-   if(a.coins<amount) return i.reply({content:'Not enough coins.',ephemeral:true});
+   if(a.coins<amount) return i.reply({content:CUSTOM_EMOJI.warning+' Not enough NexCoins.',ephemeral:true});
    db.transaction(()=>{
     db.prepare('UPDATE global_users SET coins=coins-? WHERE user=?').run(amount,u.id);
     db.prepare('UPDATE global_users SET coins=coins+? WHERE user=?').run(amount,to.id);
    })();
-   return i.reply('💳 | **<@'+u.id+'>** sent **'+amount.toLocaleString('en-US')+' NexCoins** to **<@'+to.id+'>**!');
+   return i.reply(CUSTOM_EMOJI.hand+' **<@'+u.id+'>** sent **'+money(amount)+'** to **<@'+to.id+'>**!');
   }
   if(c==='leaderboard') {
    const rows=db.prepare('SELECT user,coins FROM global_users ORDER BY coins DESC LIMIT 10').all();
    return i.reply({embeds:[new EmbedBuilder().setTitle('<:3681:1568843725591814194> Coin Leaderboard')
     .setDescription(rows.map((r,n)=>(n+1)+'. <@'+r.user+'> — '+money(r.coins)).join('\n')||'No users yet.') ]});
   }
-  if(c==='shop') return i.reply('🛍️ **NEXORA Shop**\n🍪 Cookie: 100\n☕ Coffee: 250\n👑 Golden Crown: 1000 coins\nUse `/buy`.');
+  if(c==='shop') return i.reply(CUSTOM_EMOJI.crown_gold+' **NEXORA Shop**\n'+CUSTOM_EMOJI.gem+' Cookie: 100 NexCoins\n'+CUSTOM_EMOJI.star+' Coffee: 250 NexCoins\n'+CUSTOM_EMOJI.crown_gold+' Golden Crown: 1000 NexCoins\n'+CUSTOM_EMOJI.plus+' Use `/buy`.');
   if(c==='buy') {
    const item=i.options.getString('item'), price={'Cookie':100,'Coffee':250,'Golden Crown':1000}[item], a=account(g.id,u.id);
-   if(a.coins<price) return i.reply({content:'Not enough coins.',ephemeral:true});
+   if(a.coins<price) return i.reply({content:CUSTOM_EMOJI.warning+' Not enough NexCoins.',ephemeral:true});
    db.transaction(()=>{
     db.prepare('UPDATE global_users SET coins=coins-? WHERE user=?').run(price,u.id);
     db.prepare('INSERT INTO global_inventory(user,item,quantity) VALUES(?,?,1) ON CONFLICT(user,item) DO UPDATE SET quantity=quantity+1').run(u.id,item);
    })();
-   return i.reply('<:3682:1568843729287258123> Purchased **'+item+'**!');
+   return i.reply(CUSTOM_EMOJI.success+' Purchased **'+item+'**!');
   }
   if(c==='inventory') {
    const who=target||u, rows=db.prepare('SELECT item,quantity FROM global_inventory WHERE user=?').all(who.id);
-   return i.reply('🎒 **'+who.username+'**: '+(rows.map(x=>x.item+' × '+x.quantity).join(', ')||'Empty'));
+   return i.reply(CUSTOM_EMOJI.stack+' **'+who.username+'**: '+(rows.map(x=>x.item+' × '+x.quantity).join(', ')||'Empty')); 
   }
   if(c==='setlogs') {
    if(!i.memberPermissions?.has(PermissionFlagsBits.ManageGuild)) {
@@ -1362,11 +1337,11 @@ Logs: <#${log.id}>`,ephemeral:true});
    const id='CH-'+Date.now().toString(36).toUpperCase(), ends=Math.floor((Date.now()+durationMs)/1000);
    db.prepare('INSERT INTO giveaways(id,guild,channel,prize,winners,ends) VALUES(?,?,?,?,?,?)').run(id,g.id,i.channelId,prize,winners,ends);
    const embed=new EmbedBuilder().setColor(0x36CFC7).setTitle(`${NEXORA_EMOJI.gift} ${prize} ${NEXORA_EMOJI.gift}`)
-    .setDescription(`${NEXORA_EMOJI.dot} **Winners:** ${winners}\n${NEXORA_EMOJI.dot} **Ends:** <t:${ends}:R> (<t:${ends}:f>)\n${NEXORA_EMOJI.dot} **Hosted by:** <@${u.id}>\n${NEXORA_EMOJI.dot} **Giveaway ID:** \`${id}\`\n\nReact with <:Star:${GIVEAWAY_EMOJI_ID}> to enter!`)
+    .setDescription(`${NEXORA_EMOJI.dot} **Winners:** ${winners}\n${NEXORA_EMOJI.dot} **Ends:** <t:${ends}:R> (<t:${ends}:f>)\n${NEXORA_EMOJI.dot} **Hosted by:** <@${u.id}>\n${NEXORA_EMOJI.dot} **Giveaway ID:** \`${id}\`\n\nReact with ${CUSTOM_EMOJI.star} to enter!`)
     .setFooter({text:'React to participate'}).setTimestamp(new Date(ends*1000));
    const msg=await i.reply({embeds:[embed],fetchReply:true});
    db.prepare('UPDATE giveaways SET message=? WHERE id=?').run(msg.id,id);
-   try { await msg.react(`<:Star:${GIVEAWAY_EMOJI_ID}>`); }
+   try { await msg.react(`<:3683:${GIVEAWAY_EMOJI_ID}>`); }
    catch(error) {
     console.error('Could not add giveaway entry reaction:', error);
     await msg.reply('I could not add the entry emoji. Please check that I can use external emojis and add reactions.');
@@ -1381,7 +1356,7 @@ Logs: <#${log.id}>`,ephemeral:true});
   if(c==='greroll') {
    const r=await endGiveaway(i.options.getString('id'),true);
    if(r.error) return i.reply({content:r.error,ephemeral:true});
-   return i.reply(r.winners.length?'🎉 New winner(s): '+r.winners.map(x=>'<@'+x+'>').join(', '):'No entries to reroll.');
+   return i.reply(r.winners.length?CUSTOM_EMOJI.star+' New winner(s): '+r.winners.map(x=>'<@'+x+'>').join(', '):'No entries to reroll.');
   }
  } catch(e) {
   console.error('Command error:',e);
@@ -1456,26 +1431,7 @@ client.on('guildMemberUpdate', async (oldMember,newMember) => {
 client.on('guildMemberAdd', async member => {
  try { const chId=db.prepare('SELECT value FROM chilly_config WHERE guild=? AND key=?').get(member.guild.id,'welcome_channel')?.value; const tpl=db.prepare('SELECT value FROM chilly_config WHERE guild=? AND key=?').get(member.guild.id,'welcome_message')?.value; const ch=chId?await member.guild.channels.fetch(chId).catch(()=>null):null; if(ch&&tpl) await ch.send({content:tpl.replaceAll('{user}',`<@${member.id}>`).replaceAll('{server}',member.guild.name),allowedMentions:{users:[member.id]}}); } catch(e) { console.error('Welcome message:',e.message); }
 });
-const inviteCache = new Map();
 const rpsGames = new Map();
-client.on('ready', async () => {
- for (const [, guild] of client.guilds.cache) {
-  try { inviteCache.set(guild.id, await guild.invites.fetch()); } catch { /* Manage Guild permission required for invite tracking */ }
- }
-});
-client.on('inviteCreate', async invite => {
- try { const current=await invite.guild.invites.fetch(); inviteCache.set(invite.guild.id,current); } catch {}
-});
-client.on('guildMemberAdd', async member => {
- try {
-  const old=inviteCache.get(member.guild.id); const current=await member.guild.invites.fetch(); inviteCache.set(member.guild.id,current);
-  if(!old) return;
-  const used=current.find(inv=>{ const prev=old.get(inv.code); return inv.uses>(prev?.uses||0); });
-  if(used?.inviter && used.inviter.id!==member.id) {
-   db.prepare('INSERT INTO invite_counts(guild,user,invites) VALUES(?,?,1) ON CONFLICT(guild,user) DO UPDATE SET invites=invites+1').run(member.guild.id,used.inviter.id);
-  }
- } catch (e) { console.error('Invite tracking:',e.message); }
-});
 
 client.on('messageCreate', async message => {
  if(message.author.bot) return;
@@ -1546,7 +1502,7 @@ client.on('guildCreate', async guild => {
    .setTitle('Welcome 👋')
    .setDescription(
     `Hi, I'm **${client.user.username}**! Thanks for adding me to your server.\n\n` +
-    `I can help with your server's **leveling, global economy, moderation, security, giveaways, tickets, welcome messages, autoroles, reaction roles, invite tracking, and utility commands**.\n\n` +
+    `I can help with your server's **leveling, global economy, moderation, security, giveaways, tickets, welcome messages, autoroles, reaction roles, and utility commands**.\n\n` +
     `Use **/help** to explore my commands and get started!`
    )
    .addFields({ name: 'Need help?', value: '[Join the NEXORA Support Server](https://discord.gg/TFVrsdNWGx)' })
