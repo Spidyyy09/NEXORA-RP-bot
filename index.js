@@ -198,33 +198,33 @@ const commands = [
    )),
  new SlashCommandBuilder().setName('inventory').setDescription('View inventory')
   .addUserOption(o=>o.setName('user').setDescription('Member')),
- new SlashCommandBuilder().setName('warn').setDescription('Warn a member')
+ new SlashCommandBuilder().setName('warn').setDescription('⚠️ Warn a member')
   .setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers)
   .addUserOption(o=>o.setName('user').setDescription('Member').setRequired(true))
   .addStringOption(o=>o.setName('reason').setDescription('Reason').setRequired(true)),
- new SlashCommandBuilder().setName('warnings').setDescription('View member warnings')
+ new SlashCommandBuilder().setName('warnings').setDescription('📋 View member warnings')
   .setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers)
   .addUserOption(o=>o.setName('user').setDescription('Member').setRequired(true)),
- new SlashCommandBuilder().setName('clear').setDescription('Delete recent messages')
+ new SlashCommandBuilder().setName('clear').setDescription('🧹 Delete recent messages')
   .setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages)
   .addIntegerOption(o=>o.setName('amount').setDescription('1 to 100').setMinValue(1).setMaxValue(100).setRequired(true)),
- new SlashCommandBuilder().setName('timeout').setDescription('Timeout a member')
+ new SlashCommandBuilder().setName('timeout').setDescription('🔇 Timeout a member')
   .setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers)
   .addUserOption(o=>o.setName('user').setDescription('Member').setRequired(true))
   .addIntegerOption(o=>o.setName('minutes').setDescription('Minutes').setMinValue(1).setMaxValue(40320).setRequired(true))
   .addStringOption(o=>o.setName('reason').setDescription('Reason')),
- new SlashCommandBuilder().setName('untimeout').setDescription('Remove timeout')
+ new SlashCommandBuilder().setName('untimeout').setDescription('🔊 Remove a timeout')
   .setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers)
   .addUserOption(o=>o.setName('user').setDescription('Member').setRequired(true)),
- new SlashCommandBuilder().setName('kick').setDescription('Kick a member')
+ new SlashCommandBuilder().setName('kick').setDescription('👢 Kick a member')
   .setDefaultMemberPermissions(PermissionFlagsBits.KickMembers)
   .addUserOption(o=>o.setName('user').setDescription('Member').setRequired(true))
   .addStringOption(o=>o.setName('reason').setDescription('Reason')),
- new SlashCommandBuilder().setName('ban').setDescription('Ban a member')
+ new SlashCommandBuilder().setName('ban').setDescription('🔨 Ban a member')
   .setDefaultMemberPermissions(PermissionFlagsBits.BanMembers)
   .addUserOption(o=>o.setName('user').setDescription('Member').setRequired(true))
   .addStringOption(o=>o.setName('reason').setDescription('Reason')),
- new SlashCommandBuilder().setName('unban').setDescription('Unban by user ID')
+ new SlashCommandBuilder().setName('unban').setDescription('🔓 Unban by user ID')
   .setDefaultMemberPermissions(PermissionFlagsBits.BanMembers)
   .addStringOption(o=>o.setName('userid').setDescription('User ID').setRequired(true)),
  new SlashCommandBuilder().setName('8ball').setDescription('Ask the magic 8-ball')
@@ -363,7 +363,7 @@ async function endGiveaway(id, reroll=false) {
    }
    if(winners.length) {
     await ch.send({
-     content:'🎉 '+CHILLY_EMOJI.gift+' Congratulations '+winners.map(x=>'<@'+x+'>').join(', ')+'! You won **'+g.prize+'**!\n'+CHILLY_EMOJI.gift+' Open a ticket to claim the reward!',
+     content:'🎉 '+NEXORA_EMOJI.gift+' Congratulations '+winners.map(x=>'<@'+x+'>').join(', ')+'! You won **'+g.prize+'**!\n'+NEXORA_EMOJI.gift+' Open a ticket to claim the reward!',
      allowedMentions:{users:winners}
     }).catch(()=>{});
    } else {
@@ -373,7 +373,7 @@ async function endGiveaway(id, reroll=false) {
  } else {
   const ch=await client.channels.fetch(g.channel).catch(()=>null);
   if(ch && winners.length) await ch.send({
-   content:'🎉 '+CHILLY_EMOJI.gift+' New giveaway winner(s): '+winners.map(x=>'<@'+x+'>').join(', ')+'! Prize: **'+g.prize+'**.\n'+CHILLY_EMOJI.gift+' Open a ticket to claim the reward!',
+   content:'🎉 '+NEXORA_EMOJI.gift+' New giveaway winner(s): '+winners.map(x=>'<@'+x+'>').join(', ')+'! Prize: **'+g.prize+'**.\n'+NEXORA_EMOJI.gift+' Open a ticket to claim the reward!',
    allowedMentions:{users:winners}
   }).catch(()=>{});
  }
@@ -381,7 +381,7 @@ async function endGiveaway(id, reroll=false) {
  for(const winnerId of winners) {
   const user=await client.users.fetch(winnerId).catch(()=>null);
   if(user) await user.send({
-   content:'🎉 You Won the giveaway! <@'+winnerId+'>\n'+CHILLY_EMOJI.gift+' Prize: **'+g.prize+'**\n'+CHILLY_EMOJI.gift+' Open a ticket to claim the reward!',
+   content:'🎉 You Won the giveaway! <@'+winnerId+'>\n'+NEXORA_EMOJI.gift+' Prize: **'+g.prize+'**\n'+NEXORA_EMOJI.gift+' Open a ticket to claim the reward!',
    allowedMentions:{users:[winnerId]}
   }).catch(()=>{});
  }
@@ -464,26 +464,36 @@ const CUSTOM_EMOJI = {
 };
 
 // Shared NEXORA moderation embed style.
-const CHILLY_EMOJI = {
- dm: '',
- arrow: '',
- moderator: '',
- member: '',
- dot: '',
- gift: '',
- success: '',
- rejected: '',
- admin: '',
- bot: ''
+const NEXORA_EMOJI = {
+ dm: '✉️',
+ arrow: '📝',
+ moderator: '<:3667:1568843654410534984>',
+ member: '<:3689:1568843757380698232>',
+ dot: '<:3669:1568843659963662456>',
+ gift: '🎁',
+ success: '<:3682:1568843729287258123>',
+ rejected: '<:3660:1568843631857635418>',
+ admin: '<:3667:1568843654410534984>',
+ bot: '<:3648:1568843040259579965>',
+ warn: '<:3656:1568843695229247639>',
+ warnings: '<:3668:1568843657577107516>',
+ clear: '<:3664:1568843643459211304>',
+ timeout: '<:3671:1568843665626103838>',
+ untimeout: '<:3675:1568843679073042544>',
+ kick: '<:3668:1568843657577107516>',
+ ban: '<:3687:1568843750422085693>',
+ unban: '<:3677:1568843708915257355>',
+ shield: '<:3687:1568843750422085693>',
+ clock: '<:3665:1568843646332309565>'
 };
 function moderationEmbed({title, targetLabel='Member', targetName, targetId, moderator, reason, duration, dmDone, avatar}) {
  const lines = [
-  `${CHILLY_EMOJI.member} **${targetLabel}:** ${targetName}${targetId ? ` (\`${targetId}\`)` : ''}`,
-  `${CHILLY_EMOJI.moderator} **Moderator:** ${moderator}`
+  `${NEXORA_EMOJI.member} **${targetLabel}:** ${targetName}${targetId ? ` (\`${targetId}\`)` : ''}`,
+  `${NEXORA_EMOJI.moderator} **Moderator:** ${moderator}`
  ];
- if (duration) lines.push('', `${CHILLY_EMOJI.dot} **Duration:** ${duration}`);
- if (dmDone !== undefined) lines.push('', `${CHILLY_EMOJI.dm} **DM Done?** ${dmDone ? CHILLY_EMOJI.success : CHILLY_EMOJI.rejected}`);
- lines.push('', `${CHILLY_EMOJI.arrow} **Reason:** ${reason || 'No reason provided'}`);
+ if (duration) lines.push('', `${NEXORA_EMOJI.clock} **Duration:** ${duration}`);
+ if (dmDone !== undefined) lines.push('', `${NEXORA_EMOJI.dm} **DM Done?** ${dmDone ? NEXORA_EMOJI.success : NEXORA_EMOJI.rejected}`);
+ lines.push('', `${NEXORA_EMOJI.arrow} **Reason:** ${reason || 'No reason provided'}`);
  const embed = new EmbedBuilder()
   .setColor(0x36CFC7)
   .setTitle(title)
@@ -782,7 +792,7 @@ client.on('interactionCreate', async i=>{
     jail:{title:'Jail',body:'`/jail-setup` · `/jail` · `/unjail`'},
     logs:{title:'Logs',body:'`/setlogs` — Configure the server log channel.'},
     misc:{title:'Misc',body:'`/ping` · `/help` · `/say` · `/8ball` · `/coinflip` · `/dice` · `/rps` · `/joke` · `/ship` · `/poll` · `/remind`'},
-    moderation:{title:'Moderation',body:'`/warn` · `/warnings` · `/clear` · `/timeout` · `/untimeout` · `/kick` · `/ban` · `/unban`. Each command requires its relevant Discord permission.'},
+    moderation:{title:'Moderation',body:'⚠️ `/warn` · 📋 `/warnings` · 🧹 `/clear` · 🔇 `/timeout` · 🔊 `/untimeout` · 👢 `/kick` · 🔨 `/ban` · 🔓 `/unban`. Each command requires its relevant Discord permission.'},
     np:{title:'NP',body:'No NP commands are currently configured in this build.'},
     reqrolecog:{title:'ReqRoleCog',body:'Role-request commands are not currently configured in this build.'},
     reset:{title:'Reset',body:'No reset command is currently configured in this build.'},
@@ -1122,21 +1132,21 @@ Logs: <#${log.id}>`,ephemeral:true});
    const to=i.options.getUser('user'), reason=i.options.getString('reason')||'No reason provided';
    if(to.id===TRUSTED_OWNER_ID) return i.reply({content:'<:3667:1568843654410534984> This user is protected. NEXORA cannot warn this account.',ephemeral:true});
    let dmDone=false;
-   try { await to.send({embeds:[moderationEmbed({title:'You have been warned!',targetName:`${to.tag}`,targetId:to.id,moderator:`${u.tag}`,reason,avatar:to.displayAvatarURL()})]}); dmDone=true; } catch {}
+   try { await to.send({embeds:[moderationEmbed({title:`${NEXORA_EMOJI.warn} You have been warned!`,targetName:`${to.tag}`,targetId:to.id,moderator:`${u.tag}`,reason,avatar:to.displayAvatarURL()})]}); dmDone=true; } catch {}
    db.prepare('INSERT INTO warnings(guild,user,moderator,reason,created) VALUES(?,?,?,?,?)').run(g.id,to.id,u.id,reason,Date.now());
-   const embed=moderationEmbed({title:'User has been warned!',targetName:`<@${to.id}>`,targetId:to.id,moderator:`<@${u.id}>`,reason,dmDone,avatar:to.displayAvatarURL()});
+   const embed=moderationEmbed({title:`${NEXORA_EMOJI.warn} User has been warned!`,targetName:`<@${to.id}>`,targetId:to.id,moderator:`<@${u.id}>`,reason,dmDone,avatar:to.displayAvatarURL()});
    await logAction(g,embed);
    return i.reply({embeds:[embed]});
   }
   if(c==='warnings') {
    const to=i.options.getUser('user');
    const rows=db.prepare('SELECT reason,moderator,created FROM warnings WHERE guild=? AND user=? ORDER BY id DESC LIMIT 10').all(g.id,to.id);
-   return i.reply({embeds:[new EmbedBuilder().setTitle('Warnings: '+to.username)
-    .setDescription(rows.map((x,n)=>(n+1)+'. '+x.reason+' — <@'+x.moderator+'>').join('\n')||'No warnings found.')]});
+   return i.reply({embeds:[new EmbedBuilder().setTitle(`${NEXORA_EMOJI.warnings} Warnings: ${to.username}`).setColor(0xF1C40F).setFooter({text:'NEXORA Moderation'})
+    .setDescription(rows.map((x,n)=>`${NEXORA_EMOJI.warn} ${n+1}. ${x.reason} — <@${x.moderator}>`).join('\n')||`${NEXORA_EMOJI.success} No warnings found.`)]});
   }
   if(c==='clear') {
    const n=i.options.getInteger('amount'), deleted=await i.channel.bulkDelete(n,true);
-   return i.reply({content:'🧹 Deleted '+deleted.size+' messages.',ephemeral:true});
+   return i.reply({content:`${NEXORA_EMOJI.clear} **Messages cleared:** ${deleted.size}`,ephemeral:true});
   }
   if(c==='timeout'||c==='untimeout') {
    const to=i.options.getUser('user');
@@ -1146,17 +1156,17 @@ Logs: <#${log.id}>`,ephemeral:true});
    if(c==='timeout') {
     const mins=i.options.getInteger('minutes'), reason=i.options.getString('reason')||'No reason provided';
     let dmDone=false;
-    try { await to.send({embeds:[moderationEmbed({title:'You have been timed out!',targetName:to.tag,targetId:to.id,moderator:u.tag,reason,duration:`${mins} minute(s)`,avatar:to.displayAvatarURL()})]}); dmDone=true; } catch {}
+    try { await to.send({embeds:[moderationEmbed({title:`${NEXORA_EMOJI.timeout} You have been timed out!`,targetName:to.tag,targetId:to.id,moderator:u.tag,reason,duration:`${mins} minute(s)`,avatar:to.displayAvatarURL()})]}); dmDone=true; } catch {}
     await m.timeout(mins*60000,reason);
-    const embed=moderationEmbed({title:'User has been timed out!',targetName:`<@${to.id}>`,targetId:to.id,moderator:`<@${u.id}>`,reason,duration:`${mins} minute(s)`,dmDone,avatar:to.displayAvatarURL()});
+    const embed=moderationEmbed({title:`${NEXORA_EMOJI.timeout} User has been timed out!`,targetName:`<@${to.id}>`,targetId:to.id,moderator:`<@${u.id}>`,reason,duration:`${mins} minute(s)`,dmDone,avatar:to.displayAvatarURL()});
     await logAction(g,embed);
     return i.reply({embeds:[embed]});
    }
    const reason='Timeout removed';
    let dmDone=false;
-   try { await to.send({embeds:[moderationEmbed({title:'Your timeout has been removed!',targetName:to.tag,targetId:to.id,moderator:u.tag,reason,avatar:to.displayAvatarURL()})]}); dmDone=true; } catch {}
+   try { await to.send({embeds:[moderationEmbed({title:`${NEXORA_EMOJI.untimeout} Your timeout has been removed!`,targetName:to.tag,targetId:to.id,moderator:u.tag,reason,avatar:to.displayAvatarURL()})]}); dmDone=true; } catch {}
    await m.timeout(null,reason);
-   const embed=moderationEmbed({title:'User has been unmuted!',targetName:`<@${to.id}>`,targetId:to.id,moderator:`<@${u.id}>`,reason,dmDone,avatar:to.displayAvatarURL()});
+   const embed=moderationEmbed({title:`${NEXORA_EMOJI.untimeout} User has been unmuted!`,targetName:`<@${to.id}>`,targetId:to.id,moderator:`<@${u.id}>`,reason,dmDone,avatar:to.displayAvatarURL()});
    await logAction(g,embed);
    return i.reply({embeds:[embed]});
   }
@@ -1166,9 +1176,9 @@ Logs: <#${log.id}>`,ephemeral:true});
    const m=await g.members.fetch(to.id);
    if(to.id===u.id) return i.reply({content:'You cannot moderate yourself.',ephemeral:true});
    let dmDone=false;
-   try { await to.send({embeds:[moderationEmbed({title:c==='kick'?'You have been kicked!':'You have been banned!',targetName:to.tag,targetId:to.id,moderator:u.tag,reason,avatar:to.displayAvatarURL()})]}); dmDone=true; } catch {}
+   try { await to.send({embeds:[moderationEmbed({title:c==='kick'?`${NEXORA_EMOJI.kick} You have been kicked!`:`${NEXORA_EMOJI.ban} You have been banned!`,targetName:to.tag,targetId:to.id,moderator:u.tag,reason,avatar:to.displayAvatarURL()})]}); dmDone=true; } catch {}
    if(c==='kick') await m.kick(reason); else await m.ban({reason});
-   const embed=moderationEmbed({title:c==='kick'?'User has been kicked!':'User has been banned!',targetName:`<@${to.id}>`,targetId:to.id,moderator:`<@${u.id}>`,reason,dmDone,avatar:to.displayAvatarURL()});
+   const embed=moderationEmbed({title:c==='kick'?`${NEXORA_EMOJI.kick} User has been kicked!`:`${NEXORA_EMOJI.ban} User has been banned!`,targetName:`<@${to.id}>`,targetId:to.id,moderator:`<@${u.id}>`,reason,dmDone,avatar:to.displayAvatarURL()});
    await logAction(g,embed);
    return i.reply({embeds:[embed]});
   }
@@ -1178,8 +1188,8 @@ Logs: <#${log.id}>`,ephemeral:true});
    try { to=await client.users.fetch(id); } catch {}
    await g.members.unban(id,reason);
    let dmDone=false;
-   if(to) { try { await to.send({embeds:[moderationEmbed({title:'You have been unbanned!',targetName:to.tag,targetId:to.id,moderator:u.tag,reason,avatar:to.displayAvatarURL()})]}); dmDone=true; } catch {} }
-   const embed=moderationEmbed({title:'User has been unbanned!',targetLabel:'User',targetName:to ? to.tag : `\`${id}\``,targetId:id,moderator:`<@${u.id}>`,reason,dmDone,avatar:to?.displayAvatarURL()});
+   if(to) { try { await to.send({embeds:[moderationEmbed({title:`${NEXORA_EMOJI.unban} You have been unbanned!`,targetName:to.tag,targetId:to.id,moderator:u.tag,reason,avatar:to.displayAvatarURL()})]}); dmDone=true; } catch {} }
+   const embed=moderationEmbed({title:`${NEXORA_EMOJI.unban} User has been unbanned!`,targetLabel:'User',targetName:to ? to.tag : `\`${id}\``,targetId:id,moderator:`<@${u.id}>`,reason,dmDone,avatar:to?.displayAvatarURL()});
    await logAction(g,embed);
    return i.reply({embeds:[embed]});
   }
@@ -1342,8 +1352,8 @@ Logs: <#${log.id}>`,ephemeral:true});
     return i.reply({content:'Duration must be between `1m` and `30d`.',ephemeral:true});
    const id='CH-'+Date.now().toString(36).toUpperCase(), ends=Math.floor((Date.now()+durationMs)/1000);
    db.prepare('INSERT INTO giveaways(id,guild,channel,prize,winners,ends) VALUES(?,?,?,?,?,?)').run(id,g.id,i.channelId,prize,winners,ends);
-   const embed=new EmbedBuilder().setColor(0x36CFC7).setTitle(`${CHILLY_EMOJI.gift} ${prize} ${CHILLY_EMOJI.gift}`)
-    .setDescription(`${CHILLY_EMOJI.dot} **Winners:** ${winners}\n${CHILLY_EMOJI.dot} **Ends:** <t:${ends}:R> (<t:${ends}:f>)\n${CHILLY_EMOJI.dot} **Hosted by:** <@${u.id}>\n${CHILLY_EMOJI.dot} **Giveaway ID:** \`${id}\`\n\nReact with <:Star:${GIVEAWAY_EMOJI_ID}> to enter!`)
+   const embed=new EmbedBuilder().setColor(0x36CFC7).setTitle(`${NEXORA_EMOJI.gift} ${prize} ${NEXORA_EMOJI.gift}`)
+    .setDescription(`${NEXORA_EMOJI.dot} **Winners:** ${winners}\n${NEXORA_EMOJI.dot} **Ends:** <t:${ends}:R> (<t:${ends}:f>)\n${NEXORA_EMOJI.dot} **Hosted by:** <@${u.id}>\n${NEXORA_EMOJI.dot} **Giveaway ID:** \`${id}\`\n\nReact with <:Star:${GIVEAWAY_EMOJI_ID}> to enter!`)
     .setFooter({text:'React to participate'}).setTimestamp(new Date(ends*1000));
    const msg=await i.reply({embeds:[embed],fetchReply:true});
    db.prepare('UPDATE giveaways SET message=? WHERE id=?').run(msg.id,id);
@@ -1399,14 +1409,14 @@ client.on('roleDelete', async role => {
  if(cfg.antinuke) await logAction(role.guild,auditEmbed('<:3667:1568843654410534984> Anti-nuke Alert',0xE74C3C,[{name:'Event',value:'A role was deleted.'},{name:'Role',value:role.name},{name:'Action',value:'Alert only; check Audit Log and secure staff permissions.'}]));
 });
 client.on('guildBanAdd', async ban => {
- const e=auditEmbed('🔨 Member Banned',0xE74C3C,[{name:'Member',value:`${ban.user.tag} (${ban.user.id})`},{name:'Reason',value:ban.reason||'Not provided'}]);
+ const e=auditEmbed(`${NEXORA_EMOJI.ban} Member Banned`,0xE74C3C,[{name:'Member',value:`${ban.user.tag} (${ban.user.id})`},{name:'Reason',value:ban.reason||'Not provided'}]);
  await logAction(ban.guild,e);
 });
 client.on('guildMemberRemove', async member => {
  try {
   const logs=await member.guild.fetchAuditLogs({type:20,limit:5});
   const entry=logs.entries.find(x=>x.target?.id===member.id && Date.now()-x.createdTimestamp<10000);
-  if(entry) await logAction(member.guild,auditEmbed('👢 Member Kicked',0xE67E22,[{name:'Member',value:`${member.user.tag} (${member.id})`},{name:'Moderator',value:entry.executor?`${entry.executor.tag} (${entry.executor.id})`:'Unknown'},{name:'Reason',value:entry.reason||'Not provided'}]));
+  if(entry) await logAction(member.guild,auditEmbed(`${NEXORA_EMOJI.kick} Member Kicked`,0xE67E22,[{name:'Member',value:`${member.user.tag} (${member.id})`},{name:'Moderator',value:entry.executor?`${entry.executor.tag} (${entry.executor.id})`:'Unknown'},{name:'Reason',value:entry.reason||'Not provided'}]));
  } catch(e) { console.error('Kick audit lookup failed:',e); }
  const cfg=settings(member.guild.id);
  if(cfg.antiraid) {
@@ -1430,7 +1440,7 @@ client.on('guildMemberAdd', async member => {
 client.on('guildMemberUpdate', async (oldMember,newMember) => {
  const was=oldMember.communicationDisabledUntilTimestamp, now=newMember.communicationDisabledUntilTimestamp;
  if(was!==now) {
-  const e=auditEmbed(now?'🔇 Member Timed Out':'🔊 Member Timeout Removed',now?0xE67E22:0x2ECC71,[{name:'Member',value:`${newMember.user.tag} (${newMember.id})`},{name:'Until',value:now?`<t:${Math.floor(now/1000)}:F>`:'Timeout cleared'}]);
+  const e=auditEmbed(now?`${NEXORA_EMOJI.timeout} Member Timed Out`:`${NEXORA_EMOJI.untimeout} Member Timeout Removed`,now?0xE67E22:0x2ECC71,[{name:'Member',value:`${newMember.user.tag} (${newMember.id})`},{name:'Until',value:now?`<t:${Math.floor(now/1000)}:F>`:'Timeout cleared'}]);
   await logAction(newMember.guild,e);
  }
 });
