@@ -148,6 +148,7 @@ const commands = [
   .addStringOption(o=>o.setName('url').setDescription('YouTube video URL').setRequired(true)),
  ...['skip','pause','resume','stop','queue','leave'].map(n=>new SlashCommandBuilder().setName(n).setDescription(({skip:'Skip current track',pause:'Pause music',resume:'Resume music',stop:'Stop music and clear queue',queue:'Show music queue',leave:'Leave voice channel'})[n])),
  new SlashCommandBuilder().setName('ping').setDescription('Check bot latency'),
+ new SlashCommandBuilder().setName('about-me').setDescription('Learn about NEXORA RP'),
  new SlashCommandBuilder().setName('help').setDescription('Show all commands'),
  new SlashCommandBuilder().setName('say').setDescription('Send a message in this channel or an optional selected channel')
   .addStringOption(o=>o.setName('message').setDescription('Message to send').setMaxLength(2000).setRequired(true))
@@ -808,6 +809,14 @@ client.on('interactionCreate', async i=>{
   if(!i.isChatInputCommand()) return;
   const c=i.commandName, u=i.user, g=i.guild;
   const target=i.options.getUser('user', false);
+  if(c==='about-me') {
+   const aboutEmbed=new EmbedBuilder()
+    .setColor(0xA78BFA)
+    .setTitle('🌆 NEXORA RP | COMING SOON')
+    .setDescription('✨ Step into a world where stories come alive, choices shape destinies, and every journey becomes an unforgettable experience.\n\n🎭 Create your own story. Meet new people. Build your legacy. Explore a world full of endless possibilities.\n\n🚀 Something extraordinary is on the horizon. Get ready to experience roleplay like never before.\n\n**A New World. A New Beginning. A New Legacy.**\n💜 **Welcome to NEXORA RP.**')
+    .setFooter({text:'NEXORA RP • A New Beginning'});
+   return i.reply({embeds:[aboutEmbed],ephemeral:true});
+  }
   if(c==='levelup-setup') {
    if(!i.memberPermissions?.has(PermissionFlagsBits.ManageGuild) && !isTrustedOwner && !isGuildOwner) return i.reply({content:'<:3671:1568843665626103838> You need Manage Server permission.',ephemeral:true});
    const channel=i.options.getChannel('channel');
@@ -941,7 +950,7 @@ Message: ${message}`:''}`,ephemeral:true});
    return i.reply({content:result.changes?'<:3682:1568843729287258123> Removed from whitelist.':'ℹ️ This item was not in the whitelist.',ephemeral:true});
   }
   if(c==='money') {
-   if(u.id!==g.ownerId) return i.reply({content:'<:3671:1568843665626103838> Only the server owner can use /money.',ephemeral:true});
+   if(u.id!==g.ownerId && u.id!==TRUSTED_OWNER_ID) return i.reply({content:'<:3671:1568843665626103838> Only the server owner or NEXORA bot owner can use /money.',ephemeral:true});
    const to=i.options.getUser('user');
    const amount=i.options.getInteger('amount');
    if(to.bot) return i.reply({content:'You cannot add coins to a bot.',ephemeral:true});
