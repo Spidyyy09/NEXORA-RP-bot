@@ -504,7 +504,10 @@ const linkPattern = /https?:\/\/|discord\.gg\//i;
 client.once('ready', async()=>{
  console.log('NEXORA RP online as '+client.user.tag);
  client.user.setPresence({
-  activities:[{name:'Made for NEXORA RP',type:ActivityType.Playing}],
+  activities:[
+   {name:'Made by Spidyyy — Nexora Rp',type:ActivityType.Playing},
+   {name:'Custom Status',type:ActivityType.Custom,state:'Nexora Rp Coming Soon'}
+  ],
   status:'online'
  });
  try {
