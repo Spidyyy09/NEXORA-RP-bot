@@ -894,7 +894,7 @@ Message: ${message}`:''}`,ephemeral:true});
    const botMember=g.members.me;
    const permissions=channel.permissionsFor(botMember);
    if(!permissions?.has(PermissionFlagsBits.ViewChannel) || !permissions?.has(PermissionFlagsBits.SendMessages)) return i.reply({content:'<:3660:1568843631857635418> I need **View Channel** and **Send Messages** permissions in that channel.',ephemeral:true});
-   await channel.send({content:message,allowedMentions:{parse:[]}});
+   await channel.send({content:message,allowedMentions:{parse:['everyone','roles','users']}});
    return i.reply({content:`<:3682:1568843729287258123> Announcement sent in ${channel}.`,ephemeral:true});
   }
   if(c==='say') {
