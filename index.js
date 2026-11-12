@@ -300,20 +300,13 @@ const commands = [
   .addChannelOption(o=>o.setName('channel').setDescription('Announcement channel (omit to use the current channel; use off to disable via message option)').addChannelTypes(ChannelType.GuildText).setRequired(false))
   .addStringOption(o=>o.setName('message').setDescription('Message tags: {user}, {level}, {xp}').setMaxLength(1000).setRequired(false)),
  new SlashCommandBuilder().setName('attendance').setDescription('Staff attendance management')
-  .addSubcommand(sub=>sub.setName('setup').setDescription('Set a separate attendance channel for each country team')
-   .addChannelOption(o=>o.setName('indian_channel').setDescription('Indian Staff attendance channel').addChannelTypes(ChannelType.GuildText).setRequired(true))
-   .addChannelOption(o=>o.setName('pakistani_channel').setDescription('Pakistani Staff attendance channel').addChannelTypes(ChannelType.GuildText).setRequired(true))
-   .addChannelOption(o=>o.setName('usa_channel').setDescription('USA Staff attendance channel').addChannelTypes(ChannelType.GuildText).setRequired(true))
-   .addChannelOption(o=>o.setName('bangladesh_channel').setDescription('Bangladesh Staff attendance channel').addChannelTypes(ChannelType.GuildText).setRequired(true))
-   .addRoleOption(o=>o.setName('indian_staff').setDescription('Indian Staff Team role').setRequired(true))
-   .addRoleOption(o=>o.setName('pakistani_staff').setDescription('Pakistani Staff Team role').setRequired(true))
-   .addRoleOption(o=>o.setName('usa_staff').setDescription('USA Staff Team role').setRequired(true))
-   .addRoleOption(o=>o.setName('bangladesh_staff').setDescription('Bangladesh Staff Team role').setRequired(true)))
+  .addSubcommand(sub=>sub.setName('setup').setDescription('Configure one attendance panel and daily logs for all staff')
+   .addRoleOption(o=>o.setName('staff_role').setDescription('Role containing all staff members').setRequired(true))
+   .addChannelOption(o=>o.setName('panel_channel').setDescription('Channel where the attendance embed and button will be posted').addChannelTypes(ChannelType.GuildText).setRequired(true))
+   .addChannelOption(o=>o.setName('logs_channel').setDescription('Channel where daily present/absent logs will be posted').addChannelTypes(ChannelType.GuildText).setRequired(true)))
   .addSubcommand(sub=>sub.setName('report').setDescription('Show weekly or monthly attendance report')
-   .addStringOption(o=>o.setName('period').setDescription('Report period').setRequired(true).addChoices({name:'Weekly',value:'weekly'},{name:'Monthly',value:'monthly'}))
-   .addStringOption(o=>o.setName('country').setDescription('Optional country team').setRequired(false).addChoices({name:'Indian Staff',value:'indian'},{name:'Pakistani Staff',value:'pakistani'},{name:'USA Staff',value:'usa'},{name:'Bangladesh Staff',value:'bangladesh'})))
-  .addSubcommand(sub=>sub.setName('status').setDescription('Show who is present and absent today')
-   .addStringOption(o=>o.setName('country').setDescription('Country team').setRequired(true).addChoices({name:'Indian Staff',value:'indian'},{name:'Pakistani Staff',value:'pakistani'},{name:'USA Staff',value:'usa'},{name:'Bangladesh Staff',value:'bangladesh'}))),
+   .addStringOption(o=>o.setName('period').setDescription('Report period').setRequired(true).addChoices({name:'Weekly',value:'weekly'},{name:'Monthly',value:'monthly'})))
+  .addSubcommand(sub=>sub.setName('status').setDescription('Show who is present and absent today')),
  new SlashCommandBuilder().setName('levelrole').setDescription('Configure level-based role rewards')
   .setDefaultMemberPermissions(PermissionFlagsBits.ManageRoles)
   .addSubcommand(sub=>sub.setName('add').setDescription('Give a role at a specific level')
@@ -516,47 +509,43 @@ const recentMessages = new Map();
 const recentJoins = new Map();
 const actionCounts = new Map();
 const linkPattern = /https?:\/\/|discord\.gg\//i;
-const attendanceCountries = {
- indian:{label:'Indian Staff Team',role:'attendance_role_indian',channel:'attendance_channel_indian'},
- pakistani:{label:'Pakistani Staff Team',role:'attendance_role_pakistani',channel:'attendance_channel_pakistani'},
- usa:{label:'USA Staff Team',role:'attendance_role_usa',channel:'attendance_channel_usa'},
- bangladesh:{label:'Bangladesh Staff Team',role:'attendance_role_bangladesh',channel:'attendance_channel_bangladesh'}
-};
 const utcDay = (time=Date.now()) => new Date(time).toISOString().slice(0,10);
-async function publishDailyAttendance(guild, country, day) {
- const info=attendanceCountries[country];
- const roleId=db.prepare('SELECT value FROM chilly_config WHERE guild=? AND key=?').get(guild.id,info.role)?.value;
- const channelId=db.prepare('SELECT value FROM chilly_config WHERE guild=? AND key=?').get(guild.id,info.channel)?.value;
+async function publishDailyAttendance(guild, day) {
+ const roleId=db.prepare('SELECT value FROM chilly_config WHERE guild=? AND key=?').get(guild.id,'attendance_staff_role')?.value;
+ const channelId=db.prepare('SELECT value FROM chilly_config WHERE guild=? AND key=?').get(guild.id,'attendance_logs_channel')?.value;
  if(!roleId||!channelId) return;
  await guild.members.fetch();
  const staff=guild.members.cache.filter(m=>m.roles.cache.has(roleId)&&!m.user.bot);
- const present=new Set(db.prepare('SELECT user FROM staff_attendance WHERE guild=? AND country=? AND day=?').all(guild.id,country,day).map(x=>x.user));
+ const present=new Set(db.prepare('SELECT user FROM staff_attendance WHERE guild=? AND country=? AND day=?').all(guild.id,'all',day).map(x=>x.user));
  const yes=[...staff.values()].filter(m=>present.has(m.id));
  const no=[...staff.values()].filter(m=>!present.has(m.id));
- const embed=new EmbedBuilder().setColor(0x77DDE7).setTitle('📊 '+info.label+' — Daily Attendance Result')
-  .setDescription('Attendance date: **'+day+' (UTC)**\n🟢 Present: **'+yes.length+'**\n🔴 Absent: **'+no.length+'**')
-  .addFields({name:'🟢 Present Staff',value:yes.map(m=>m.toString()).join('\n').slice(0,1024)||'None'},{name:'🔴 Absent Staff',value:no.map(m=>m.toString()).join('\n').slice(0,1024)||'None'})
-  .setFooter({text:'NEXORA RP • Daily report automatically posted every 24 hours'});
+ const chunks=(members)=>{ const lines=members.map(m=>m.toString()); const out=[]; let part=''; for(const line of lines){ if((part+'\n'+line).length>1000){out.push(part);part=line;}else part+=(part?'\n':'')+line;} if(part)out.push(part); return out; };
+ const embed=new EmbedBuilder().setColor(0x77DDE7).setTitle(`${CUSTOM_EMOJI.chart} NEXORA RP — Daily Staff Attendance`)
+  .setDescription(`${CUSTOM_EMOJI.clock} **Attendance date:** ${day} (UTC)\n${CUSTOM_EMOJI.member} **Total staff:** ${staff.size}\n${CUSTOM_EMOJI.check_circle} **Present:** ${yes.length}\n${CUSTOM_EMOJI.cross} **Absent:** ${no.length}`)
+  .setFooter({text:'NEXORA RP • Daily attendance log'});
+ const fields=[...chunks(yes).map((v,i)=>({name:`${CUSTOM_EMOJI.check_circle} ${i?'Present Staff (continued)':'Present Staff'}`,value:v})),...chunks(no).map((v,i)=>({name:`${CUSTOM_EMOJI.cross} ${i?'Absent Staff (continued)':'Absent Staff'}`,value:v}))];
  const channel=await guild.channels.fetch(channelId).catch(()=>null);
- if(channel?.isTextBased()) await channel.send({embeds:[embed],allowedMentions:{parse:[]}});
+ if(channel?.isTextBased()) {
+  if(!fields.length) embed.addFields({name:'Attendance',value:'No staff members found.'});
+  else embed.addFields(...fields.slice(0,25));
+  await channel.send({embeds:[embed],allowedMentions:{parse:[]}});
+ }
 }
 async function checkAttendanceDayRollover() {
  const today=utcDay();
  for(const guild of client.guilds.cache.values()) {
-  for(const [country,info] of Object.entries(attendanceCountries)) {
-   const channelId=db.prepare('SELECT value FROM chilly_config WHERE guild=? AND key=?').get(guild.id,info.channel)?.value;
-   if(!channelId) continue;
-   const key='attendance_last_report_'+country;
-   const previous=db.prepare('SELECT value FROM chilly_config WHERE guild=? AND key=?').get(guild.id,key)?.value;
-   if(!previous) {
-    db.prepare('INSERT INTO chilly_config(guild,key,value) VALUES(?,?,?) ON CONFLICT(guild,key) DO UPDATE SET value=excluded.value').run(guild.id,key,today);
-    continue;
-   }
-   if(previous!==today) {
-    try { await publishDailyAttendance(guild,country,previous); }
-    catch(error) { console.error('Daily attendance report failed:',guild.id,country,error.message); }
-    db.prepare('INSERT INTO chilly_config(guild,key,value) VALUES(?,?,?) ON CONFLICT(guild,key) DO UPDATE SET value=excluded.value').run(guild.id,key,today);
-   }
+  const channelId=db.prepare('SELECT value FROM chilly_config WHERE guild=? AND key=?').get(guild.id,'attendance_logs_channel')?.value;
+  if(!channelId) continue;
+  const key='attendance_last_report_all';
+  const previous=db.prepare('SELECT value FROM chilly_config WHERE guild=? AND key=?').get(guild.id,key)?.value;
+  if(!previous) {
+   db.prepare('INSERT INTO chilly_config(guild,key,value) VALUES(?,?,?) ON CONFLICT(guild,key) DO UPDATE SET value=excluded.value').run(guild.id,key,today);
+   continue;
+  }
+  if(previous!==today) {
+   try { await publishDailyAttendance(guild,previous); }
+   catch(error) { console.error('Daily attendance report failed:',guild.id,error.message); }
+   db.prepare('INSERT INTO chilly_config(guild,key,value) VALUES(?,?,?) ON CONFLICT(guild,key) DO UPDATE SET value=excluded.value').run(guild.id,key,today);
   }
  }
 }
@@ -686,15 +675,13 @@ async function stealFromSourceMessage(guild, sourceMessage) {
 
 client.on('interactionCreate', async i=>{
  try {
-  if(i.isButton() && i.customId.startsWith('nexora_attendance:')) {
-   const [,country] = i.customId.split(':');
-   const roles={indian:'attendance_role_indian',pakistani:'attendance_role_pakistani',usa:'attendance_role_usa',bangladesh:'attendance_role_bangladesh'};
-   const roleId=db.prepare('SELECT value FROM chilly_config WHERE guild=? AND key=?').get(i.guildId,roles[country])?.value;
-   if(!roleId) return i.reply({content:'Attendance is not configured for this team yet.',ephemeral:true});
+  if(i.isButton() && i.customId==='nexora_attendance:all') {
+   const roleId=db.prepare('SELECT value FROM chilly_config WHERE guild=? AND key=?').get(i.guildId,'attendance_staff_role')?.value;
+   if(!roleId) return i.reply({content:'Attendance is not configured yet.',ephemeral:true});
    const member=await i.guild.members.fetch(i.user.id).catch(()=>null);
-   if(!member?.roles.cache.has(roleId)) return i.reply({content:'Only members of this staff team can mark their attendance.',ephemeral:true});
-   const day=new Date().toLocaleDateString('en-CA',{timeZone:'UTC'});
-   const result=db.prepare('INSERT OR IGNORE INTO staff_attendance(guild,country,user,day,first_checkin) VALUES(?,?,?,?,?)').run(i.guildId,country,i.user.id,day,Date.now());
+   if(!member?.roles.cache.has(roleId)) return i.reply({content:'Only members with the configured staff role can mark attendance.',ephemeral:true});
+   const day=utcDay();
+   const result=db.prepare('INSERT OR IGNORE INTO staff_attendance(guild,country,user,day,first_checkin) VALUES(?,?,?,?,?)').run(i.guildId,'all',i.user.id,day,Date.now());
    return i.reply({content:result.changes?'✅ Your attendance has been marked **PRESENT** for today.':'You have already marked attendance today.',ephemeral:true});
   }
   if(i.isButton() && i.customId==='chilly_servercopy_cancel') return i.update({content:'Server copy cancelled.',components:[]});
@@ -952,55 +939,43 @@ Message: ${message}`:''}`,ephemeral:true});
    const canManageAttendance=isTrustedOwner || isGuildOwner || !!i.memberPermissions?.has(PermissionFlagsBits.ManageGuild);
    if(!canManageAttendance) return i.reply({content:'⛔ Only the bot owner, server owner, or members with Manage Server permission can manage attendance.',ephemeral:true});
    const sub=i.options.getSubcommand();
-   const countries={indian:{label:'Indian Staff Team',role:'attendance_role_indian',channel:'attendance_channel_indian'},pakistani:{label:'Pakistani Staff Team',role:'attendance_role_pakistani',channel:'attendance_channel_pakistani'},usa:{label:'USA Staff Team',role:'attendance_role_usa',channel:'attendance_channel_usa'},bangladesh:{label:'Bangladesh Staff Team',role:'attendance_role_bangladesh',channel:'attendance_channel_bangladesh'}};
    if(sub==='setup') {
-    const configured={
-     indian:{role:i.options.getRole('indian_staff',true),channel:i.options.getChannel('indian_channel',true)},
-     pakistani:{role:i.options.getRole('pakistani_staff',true),channel:i.options.getChannel('pakistani_channel',true)},
-     usa:{role:i.options.getRole('usa_staff',true),channel:i.options.getChannel('usa_channel',true)},
-     bangladesh:{role:i.options.getRole('bangladesh_staff',true),channel:i.options.getChannel('bangladesh_channel',true)}
-    };
-    for(const [country,entry] of Object.entries(configured)) {
-     const info=countries[country];
-     db.prepare('INSERT INTO chilly_config(guild,key,value) VALUES(?,?,?) ON CONFLICT(guild,key) DO UPDATE SET value=excluded.value').run(g.id,info.role,entry.role.id);
-     db.prepare('INSERT INTO chilly_config(guild,key,value) VALUES(?,?,?) ON CONFLICT(guild,key) DO UPDATE SET value=excluded.value').run(g.id,info.channel,entry.channel.id);
-     db.prepare('INSERT INTO chilly_config(guild,key,value) VALUES(?,?,?) ON CONFLICT(guild,key) DO UPDATE SET value=excluded.value').run(g.id,'attendance_last_report_'+country,utcDay());
-     const embed=new EmbedBuilder().setColor(0x77DDE7).setTitle('📋 '+info.label+' — Daily Attendance').setDescription('Only members with the configured staff role can mark attendance.\n\n🟢 Press **Mark Present** once during each 24-hour attendance day.\n🔴 Staff who do not check in are automatically listed as absent in the daily report.\n\nDaily report is posted here automatically after the attendance day ends.').setFooter({text:'NEXORA RP • Staff Attendance'});
-     const row=new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('nexora_attendance:'+country).setLabel('Mark Present').setEmoji('✅').setStyle(ButtonStyle.Success));
-     await entry.channel.send({embeds:[embed],components:[row]});
-    }
-    return i.reply({content:'✅ Attendance panels posted in four separate channels. Each country team has its own staff role, channel, daily attendance and automatic absent report.',ephemeral:true});
+    const role=i.options.getRole('staff_role',true), panel=i.options.getChannel('panel_channel',true), logs=i.options.getChannel('logs_channel',true);
+    for(const [key,value] of [['attendance_staff_role',role.id],['attendance_panel_channel',panel.id],['attendance_logs_channel',logs.id],['attendance_last_report_all',utcDay()]])
+     db.prepare('INSERT INTO chilly_config(guild,key,value) VALUES(?,?,?) ON CONFLICT(guild,key) DO UPDATE SET value=excluded.value').run(g.id,key,value);
+    const embed=new EmbedBuilder().setColor(0x77DDE7).setTitle(`${CUSTOM_EMOJI.chart} NEXORA RP — Staff Attendance`)
+     .setDescription(`${CUSTOM_EMOJI.member} All staff members with the configured role can mark their attendance here.\n\n${CUSTOM_EMOJI.check_circle} Press **Mark Present** once during each daily attendance cycle.\n${CUSTOM_EMOJI.cross} Staff who do not check in will be listed as absent in the daily log.\n\n${CUSTOM_EMOJI.clock} Daily present/absent reports are automatically posted in the configured attendance logs channel after the day ends (UTC).`)
+     .setFooter({text:'NEXORA RP • Staff Attendance'});
+    const row=new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('nexora_attendance:all').setLabel('Mark Present').setEmoji({name:'3657',id:'1568843698702258187'}).setStyle(ButtonStyle.Success));
+    await panel.send({embeds:[embed],components:[row]});
+    return i.reply({content:'✅ One attendance panel has been posted for all staff. Daily present/absent logs will be sent to the selected logs channel.',ephemeral:true});
    }
+   const roleId=db.prepare('SELECT value FROM chilly_config WHERE guild=? AND key=?').get(g.id,'attendance_staff_role')?.value;
+   if(!roleId) return i.reply({content:'Run `/attendance setup` first.',ephemeral:true});
+   await g.members.fetch();
+   const staff=g.members.cache.filter(m=>m.roles.cache.has(roleId)&&!m.user.bot);
    if(sub==='status') {
-    const country=i.options.getString('country',true), info=countries[country], roleId=db.prepare('SELECT value FROM chilly_config WHERE guild=? AND key=?').get(g.id,info.role)?.value;
-    if(!roleId) return i.reply({content:'Run `/attendance setup` first.',ephemeral:true});
-    await g.members.fetch();
-    const staff=g.members.cache.filter(m=>m.roles.cache.has(roleId)&&!m.user.bot);
-    const day=new Date().toLocaleDateString('en-CA',{timeZone:'UTC'});
-    const present=new Set(db.prepare('SELECT user FROM staff_attendance WHERE guild=? AND country=? AND day=?').all(g.id,country,day).map(x=>x.user));
+    const day=utcDay();
+    const present=new Set(db.prepare('SELECT user FROM staff_attendance WHERE guild=? AND country=? AND day=?').all(g.id,'all',day).map(x=>x.user));
     const yes=[...staff.values()].filter(m=>present.has(m.id)), no=[...staff.values()].filter(m=>!present.has(m.id));
-    const embed=new EmbedBuilder().setColor(0x77DDE7).setTitle('📊 '+info.label+' — Today').addFields({name:'🟢 Present ('+yes.length+')',value:yes.map(m=>m.toString()).join('\n').slice(0,1024)||'Nobody yet'},{name:'🔴 Absent ('+no.length+')',value:no.map(m=>m.toString()).join('\n').slice(0,1024)||'Nobody'}).setFooter({text:'UTC date: '+day});
+    const embed=new EmbedBuilder().setColor(0x77DDE7).setTitle(`${CUSTOM_EMOJI.chart} NEXORA RP — Today’s Staff Attendance`)
+     .setDescription(`${CUSTOM_EMOJI.check_circle} **Present:** ${yes.length}\n${CUSTOM_EMOJI.cross} **Absent:** ${no.length}`)
+     .addFields({name:`${CUSTOM_EMOJI.check_circle} Present Staff`,value:yes.map(m=>m.toString()).join('\n').slice(0,1024)||'Nobody yet'},{name:`${CUSTOM_EMOJI.cross} Absent Staff`,value:no.map(m=>m.toString()).join('\n').slice(0,1024)||'Nobody'})
+     .setFooter({text:`${CUSTOM_EMOJI.clock} UTC date: ${day}`});
     return i.reply({embeds:[embed],ephemeral:true});
    }
    if(sub==='report') {
-    const period=i.options.getString('period',true), selected=i.options.getString('country');
-    const since=Date.now()-(period==='weekly'?7:30)*86400000;
-    const targets=selected?[selected]:Object.keys(countries);
-    const lines=[];
-    for(const country of targets) {
-     const info=countries[country], roleId=db.prepare('SELECT value FROM chilly_config WHERE guild=? AND key=?').get(g.id,info.role)?.value;
-     if(!roleId) { lines.push('**'+info.label+':** Not configured'); continue; }
-     await g.members.fetch();
-     const staff=g.members.cache.filter(m=>m.roles.cache.has(roleId)&&!m.user.bot);
-     const rows=db.prepare('SELECT user,COUNT(*) AS days FROM staff_attendance WHERE guild=? AND country=? AND first_checkin>=? GROUP BY user').all(g.id,country,since);
-     const total=rows.reduce((n,r)=>n+r.days,0), checked=rows.length;
-     const top=rows.sort((a,b)=>b.days-a.days).slice(0,5).map(r=>'<@'+r.user+'>: '+r.days+' day(s)').join(', ');
-     lines.push('**'+info.label+'**\nStaff: '+staff.size+' • Checked in: '+checked+' • No check-in in period: '+Math.max(0,staff.size-checked)+'\nTotal check-ins: '+total+'\n'+(top?'Top attendance: '+top:'No attendance records yet'));
-    }
-    const embed=new EmbedBuilder().setColor(0x77DDE7).setTitle('📈 NEXORA RP — '+(period==='weekly'?'Weekly':'Monthly')+' Attendance Report').setDescription(lines.join('\n\n').slice(0,4000)).setFooter({text:'Monthly = last 30 days • Weekly = last 7 days • UTC'});
+    const period=i.options.getString('period',true), since=Date.now()-(period==='weekly'?7:30)*86400000;
+    const rows=db.prepare('SELECT user,COUNT(*) AS days FROM staff_attendance WHERE guild=? AND country=? AND first_checkin>=? GROUP BY user').all(g.id,'all',since);
+    const total=rows.reduce((n,r)=>n+r.days,0), checked=rows.length;
+    const top=rows.sort((a,b)=>b.days-a.days).slice(0,10).map(r=>'<@'+r.user+'>: '+r.days+' day(s)').join('\n');
+    const embed=new EmbedBuilder().setColor(0x77DDE7).setTitle(`${CUSTOM_EMOJI.chart} NEXORA RP — ${period==='weekly'?'Weekly':'Monthly'} Staff Attendance Report`)
+     .setDescription(`${CUSTOM_EMOJI.member} **Staff members:** ${staff.size}\n${CUSTOM_EMOJI.check_circle} **Staff checked in:** ${checked}\n${CUSTOM_EMOJI.cross} **No check-in:** ${Math.max(0,staff.size-checked)}\n${CUSTOM_EMOJI.stack} **Total check-ins:** ${total}\n\n${CUSTOM_EMOJI.trophy} **Top attendance**\n${top||'No attendance records yet'}`)
+     .setFooter({text:`${CUSTOM_EMOJI.clock} Monthly = last 30 days • Weekly = last 7 days • UTC`});
     return i.reply({embeds:[embed],ephemeral:true});
    }
   }
+
 
   const moderationPermissions = {
    warn: PermissionFlagsBits.ModerateMembers,
