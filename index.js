@@ -23,6 +23,7 @@ db.exec(`CREATE TABLE IF NOT EXISTS ticket_buttons (guild TEXT NOT NULL, ticket_
 db.exec(`INSERT OR IGNORE INTO ticket_buttons(guild,ticket_key,label,emoji,staff_role,log_channel) SELECT c.guild,'default','Create Ticket','🎫',r.value,c.value FROM chilly_config c JOIN chilly_config r ON r.guild=c.guild AND r.key='ticket_role' WHERE c.key='ticket_channel'`);
 db.exec(`CREATE TABLE IF NOT EXISTS leveling_xp (guild TEXT NOT NULL, user TEXT NOT NULL, xp INTEGER NOT NULL DEFAULT 0, last_message INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(guild,user))`);
 db.exec(`CREATE TABLE IF NOT EXISTS leveling_rewards (guild TEXT NOT NULL, level INTEGER NOT NULL, role TEXT NOT NULL, PRIMARY KEY(guild,level))`);
+db.exec(`CREATE TABLE IF NOT EXISTS staff_attendance (guild TEXT NOT NULL, country TEXT NOT NULL, user TEXT NOT NULL, day TEXT NOT NULL, first_checkin INTEGER NOT NULL, PRIMARY KEY(guild,country,user,day))`);
 db.exec(`CREATE TABLE IF NOT EXISTS whitelist (guild TEXT NOT NULL, kind TEXT NOT NULL, target TEXT NOT NULL, added_by TEXT, created INTEGER, PRIMARY KEY (guild, kind, target))`);
 db.exec(`CREATE TABLE IF NOT EXISTS fictional_members (guild TEXT NOT NULL, name TEXT NOT NULL, created INTEGER DEFAULT (strftime('%s','now')), PRIMARY KEY(guild,name))`);
 db.exec(`
@@ -298,6 +299,18 @@ const commands = [
   .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
   .addChannelOption(o=>o.setName('channel').setDescription('Announcement channel (omit to use the current channel; use off to disable via message option)').addChannelTypes(ChannelType.GuildText).setRequired(false))
   .addStringOption(o=>o.setName('message').setDescription('Message tags: {user}, {level}, {xp}').setMaxLength(1000).setRequired(false)),
+ new SlashCommandBuilder().setName('attendance').setDescription('Staff attendance management')
+  .addSubcommand(sub=>sub.setName('setup').setDescription('Post separate attendance panels for country staff teams')
+   .addChannelOption(o=>o.setName('channel').setDescription('Channel for attendance panels').addChannelTypes(ChannelType.GuildText).setRequired(true))
+   .addRoleOption(o=>o.setName('indian_staff').setDescription('Indian Staff Team role').setRequired(true))
+   .addRoleOption(o=>o.setName('pakistani_staff').setDescription('Pakistani Staff Team role').setRequired(true))
+   .addRoleOption(o=>o.setName('usa_staff').setDescription('USA Staff Team role').setRequired(true))
+   .addRoleOption(o=>o.setName('bangladesh_staff').setDescription('Bangladesh Staff Team role').setRequired(true)))
+  .addSubcommand(sub=>sub.setName('report').setDescription('Show weekly or monthly attendance report')
+   .addStringOption(o=>o.setName('period').setDescription('Report period').setRequired(true).addChoices({name:'Weekly',value:'weekly'},{name:'Monthly',value:'monthly'}))
+   .addStringOption(o=>o.setName('country').setDescription('Optional country team').setRequired(false).addChoices({name:'Indian Staff',value:'indian'},{name:'Pakistani Staff',value:'pakistani'},{name:'USA Staff',value:'usa'},{name:'Bangladesh Staff',value:'bangladesh'})))
+  .addSubcommand(sub=>sub.setName('status').setDescription('Show who is present and absent today')
+   .addStringOption(o=>o.setName('country').setDescription('Country team').setRequired(true).addChoices({name:'Indian Staff',value:'indian'},{name:'Pakistani Staff',value:'pakistani'},{name:'USA Staff',value:'usa'},{name:'Bangladesh Staff',value:'bangladesh'}))),
  new SlashCommandBuilder().setName('levelrole').setDescription('Configure level-based role rewards')
   .setDefaultMemberPermissions(PermissionFlagsBits.ManageRoles)
   .addSubcommand(sub=>sub.setName('add').setDescription('Give a role at a specific level')
@@ -625,6 +638,17 @@ async function stealFromSourceMessage(guild, sourceMessage) {
 
 client.on('interactionCreate', async i=>{
  try {
+  if(i.isButton() && i.customId.startsWith('nexora_attendance:')) {
+   const [,country] = i.customId.split(':');
+   const roles={indian:'attendance_role_indian',pakistani:'attendance_role_pakistani',usa:'attendance_role_usa',bangladesh:'attendance_role_bangladesh'};
+   const roleId=db.prepare('SELECT value FROM chilly_config WHERE guild=? AND key=?').get(i.guildId,roles[country])?.value;
+   if(!roleId) return i.reply({content:'Attendance is not configured for this team yet.',ephemeral:true});
+   const member=await i.guild.members.fetch(i.user.id).catch(()=>null);
+   if(!member?.roles.cache.has(roleId)) return i.reply({content:'Only members of this staff team can mark their attendance.',ephemeral:true});
+   const day=new Date().toLocaleDateString('en-CA',{timeZone:'UTC'});
+   const result=db.prepare('INSERT OR IGNORE INTO staff_attendance(guild,country,user,day,first_checkin) VALUES(?,?,?,?,?)').run(i.guildId,country,i.user.id,day,Date.now());
+   return i.reply({content:result.changes?'✅ Your attendance has been marked **PRESENT** for today.':'You have already marked attendance today.',ephemeral:true});
+  }
   if(i.isButton() && i.customId==='chilly_servercopy_cancel') return i.update({content:'Server copy cancelled.',components:[]});
   if(i.isButton() && i.customId.startsWith('chilly_servercopy_confirm:')) {
    const sourceId=i.customId.split(':')[1];
@@ -809,7 +833,8 @@ client.on('interactionCreate', async i=>{
    if(!i.memberPermissions?.has(PermissionFlagsBits.ManageGuild) && !isTrustedOwner && !isGuildOwner) return i.reply({content:'<:3671:1568843665626103838> You need Manage Server permission.',ephemeral:true});
    const channel=i.options.getChannel('channel');
    const message=i.options.getString('message');
-   if(channel) db.prepare("INSERT INTO chilly_config(guild,key,value) VALUES(?, 'levelup_channel', ?) ON CONFLICT(guild,key) DO UPDATE SET value=excluded.value").run(g.id,channel.id);
+   if(!channel) return i.reply({content:'⚠️ Level-up is disabled until you select a channel. Run `/levelup-setup` and choose a channel to enable leveling.',ephemeral:true});
+   db.prepare("INSERT INTO chilly_config(guild,key,value) VALUES(?, 'levelup_channel', ?) ON CONFLICT(guild,key) DO UPDATE SET value=excluded.value").run(g.id,channel.id);
    if(message) db.prepare("INSERT INTO chilly_config(guild,key,value) VALUES(?, 'levelup_message', ?) ON CONFLICT(guild,key) DO UPDATE SET value=excluded.value").run(g.id,message);
    if(!channel&&!message) return i.reply({content:'ℹ️ Provide a channel and/or message to update the level-up setup. Use `{user}`, `{level}`, and `{xp}` in the message.',ephemeral:true});
    return i.reply({content:`<:3682:1568843729287258123> Level-up setup updated.${channel?`
@@ -875,6 +900,53 @@ Message: ${message}`:''}`,ephemeral:true});
    catch(error) { console.error('/steal failed:',error); return i.editReply('<:3660:1568843631857635418> I could not fetch or add that emoji/sticker. Make sure the message is in this channel and I have Read Message History and Manage Expressions permissions. The server may also have reached its emoji/sticker limit.'); }
   }
   const hasAdminAccess = isTrustedOwner || isGuildOwner || !!i.memberPermissions?.has(PermissionFlagsBits.Administrator) || !!i.memberPermissions?.has(PermissionFlagsBits.ManageGuild);
+  if(c==='attendance') {
+   const canManageAttendance=isTrustedOwner || isGuildOwner || !!i.memberPermissions?.has(PermissionFlagsBits.ManageGuild);
+   if(!canManageAttendance) return i.reply({content:'⛔ Only the bot owner, server owner, or members with Manage Server permission can manage attendance.',ephemeral:true});
+   const sub=i.options.getSubcommand();
+   const countries={indian:{label:'Indian Staff Team',role:'attendance_role_indian'},pakistani:{label:'Pakistani Staff Team',role:'attendance_role_pakistani'},usa:{label:'USA Staff Team',role:'attendance_role_usa'},bangladesh:{label:'Bangladesh Staff Team',role:'attendance_role_bangladesh'}};
+   if(sub==='setup') {
+    const channel=i.options.getChannel('channel',true);
+    const configured={indian:i.options.getRole('indian_staff',true),pakistani:i.options.getRole('pakistani_staff',true),usa:i.options.getRole('usa_staff',true),bangladesh:i.options.getRole('bangladesh_staff',true)};
+    for(const [country,role] of Object.entries(configured)) db.prepare('INSERT INTO chilly_config(guild,key,value) VALUES(?,?,?) ON CONFLICT(guild,key) DO UPDATE SET value=excluded.value').run(g.id,countries[country].role,role.id);
+    for(const [country,info] of Object.entries(countries)) {
+     const embed=new EmbedBuilder().setColor(0x77DDE7).setTitle('📋 '+info.label+' — Daily Attendance').setDescription('Staff members of the **'+info.label+'** can mark themselves present using the button below.\n\n**Attendance:**\n🟢 Press **Mark Present** once per day.\n🔴 Members who do not check in are counted as absent in the daily status and reports.').setFooter({text:'NEXORA RP • Staff Attendance'});
+     const row=new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('nexora_attendance:'+country).setLabel('Mark Present').setEmoji('✅').setStyle(ButtonStyle.Success));
+     await channel.send({embeds:[embed],components:[row]});
+    }
+    return i.reply({content:'✅ Posted four separate attendance embeds for Indian, Pakistani, USA and Bangladesh staff teams. Attendance panels are active in '+channel+'.',ephemeral:true});
+   }
+   if(sub==='status') {
+    const country=i.options.getString('country',true), info=countries[country], roleId=db.prepare('SELECT value FROM chilly_config WHERE guild=? AND key=?').get(g.id,info.role)?.value;
+    if(!roleId) return i.reply({content:'Run `/attendance setup` first.',ephemeral:true});
+    await g.members.fetch();
+    const staff=g.members.cache.filter(m=>m.roles.cache.has(roleId)&&!m.user.bot);
+    const day=new Date().toLocaleDateString('en-CA',{timeZone:'UTC'});
+    const present=new Set(db.prepare('SELECT user FROM staff_attendance WHERE guild=? AND country=? AND day=?').all(g.id,country,day).map(x=>x.user));
+    const yes=[...staff.values()].filter(m=>present.has(m.id)), no=[...staff.values()].filter(m=>!present.has(m.id));
+    const embed=new EmbedBuilder().setColor(0x77DDE7).setTitle('📊 '+info.label+' — Today').addFields({name:'🟢 Present ('+yes.length+')',value:yes.map(m=>m.toString()).join('\n').slice(0,1024)||'Nobody yet'},{name:'🔴 Absent ('+no.length+')',value:no.map(m=>m.toString()).join('\n').slice(0,1024)||'Nobody'}).setFooter({text:'UTC date: '+day});
+    return i.reply({embeds:[embed],ephemeral:true});
+   }
+   if(sub==='report') {
+    const period=i.options.getString('period',true), selected=i.options.getString('country');
+    const since=Date.now()-(period==='weekly'?7:30)*86400000;
+    const targets=selected?[selected]:Object.keys(countries);
+    const lines=[];
+    for(const country of targets) {
+     const info=countries[country], roleId=db.prepare('SELECT value FROM chilly_config WHERE guild=? AND key=?').get(g.id,info.role)?.value;
+     if(!roleId) { lines.push('**'+info.label+':** Not configured'); continue; }
+     await g.members.fetch();
+     const staff=g.members.cache.filter(m=>m.roles.cache.has(roleId)&&!m.user.bot);
+     const rows=db.prepare('SELECT user,COUNT(*) AS days FROM staff_attendance WHERE guild=? AND country=? AND first_checkin>=? GROUP BY user').all(g.id,country,since);
+     const total=rows.reduce((n,r)=>n+r.days,0), checked=rows.length;
+     const top=rows.sort((a,b)=>b.days-a.days).slice(0,5).map(r=>'<@'+r.user+'>: '+r.days+' day(s)').join(', ');
+     lines.push('**'+info.label+'**\nStaff: '+staff.size+' • Checked in: '+checked+' • No check-in in period: '+Math.max(0,staff.size-checked)+'\nTotal check-ins: '+total+'\n'+(top?'Top attendance: '+top:'No attendance records yet'));
+    }
+    const embed=new EmbedBuilder().setColor(0x77DDE7).setTitle('📈 NEXORA RP — '+(period==='weekly'?'Weekly':'Monthly')+' Attendance Report').setDescription(lines.join('\n\n').slice(0,4000)).setFooter({text:'Monthly = last 30 days • Weekly = last 7 days • UTC'});
+    return i.reply({embeds:[embed],ephemeral:true});
+   }
+  }
+
   const moderationPermissions = {
    warn: PermissionFlagsBits.ModerateMembers,
    warnings: PermissionFlagsBits.ModerateMembers,
@@ -1437,7 +1509,7 @@ const rpsGames = new Map();
 
 client.on('messageCreate', async message => {
  if(message.author.bot) return;
- if(message.guild && !message.webhookId && message.content.trim().length >= 2) {
+ if(message.guild && !message.webhookId && message.content.trim().length >= 2 && db.prepare("SELECT 1 FROM chilly_config WHERE guild=? AND key='levelup_channel' AND value IS NOT NULL AND value<>''").get(message.guild.id)) {
   const now=Date.now(), row=getLevelRow(message.guild.id,message.author.id);
   if(now-row.last_message>=60000) {
    const gain=15+Math.floor(Math.random()*11), before=levelFromXp(row.xp), total=row.xp+gain, after=levelFromXp(total);
