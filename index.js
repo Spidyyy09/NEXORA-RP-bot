@@ -10,6 +10,8 @@ const TOKEN = process.env.DISCORD_TOKEN;
 const CLIENT_ID = process.env.CLIENT_ID;
 // Trusted bot owner configured by the user.
 const TRUSTED_OWNER_ID = '1312960418288898062';
+const adminRoleAllowed = member => !!member?.roles?.cache?.some(role => role.name.toLowerCase() === 'administration');
+const canConfigureSafety = (interaction, guild) => interaction.user.id === TRUSTED_OWNER_ID || interaction.user.id === guild?.ownerId || !!interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild) || !!interaction.memberPermissions?.has(PermissionFlagsBits.Administrator) || adminRoleAllowed(interaction.member);
 
 if (!TOKEN || !CLIENT_ID) {
   console.error('Missing DISCORD_TOKEN or CLIENT_ID.');
@@ -24,6 +26,8 @@ db.exec(`INSERT OR IGNORE INTO ticket_buttons(guild,ticket_key,label,emoji,staff
 db.exec(`CREATE TABLE IF NOT EXISTS leveling_xp (guild TEXT NOT NULL, user TEXT NOT NULL, xp INTEGER NOT NULL DEFAULT 0, last_message INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(guild,user))`);
 db.exec(`CREATE TABLE IF NOT EXISTS leveling_rewards (guild TEXT NOT NULL, level INTEGER NOT NULL, role TEXT NOT NULL, PRIMARY KEY(guild,level))`);
 db.exec(`CREATE TABLE IF NOT EXISTS staff_attendance (guild TEXT NOT NULL, country TEXT NOT NULL, user TEXT NOT NULL, day TEXT NOT NULL, first_checkin INTEGER NOT NULL, PRIMARY KEY(guild,country,user,day))`);
+db.exec(`CREATE TABLE IF NOT EXISTS antiabuse_words (guild TEXT NOT NULL, word TEXT NOT NULL, PRIMARY KEY(guild,word))`);
+db.exec(`CREATE TABLE IF NOT EXISTS antiabuse_offences (guild TEXT NOT NULL, user TEXT NOT NULL, count INTEGER NOT NULL DEFAULT 0, last_offence INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(guild,user))`);
 db.exec(`CREATE TABLE IF NOT EXISTS whitelist (guild TEXT NOT NULL, kind TEXT NOT NULL, target TEXT NOT NULL, added_by TEXT, created INTEGER, PRIMARY KEY (guild, kind, target))`);
 db.exec(`CREATE TABLE IF NOT EXISTS fictional_members (guild TEXT NOT NULL, name TEXT NOT NULL, created INTEGER DEFAULT (strftime('%s','now')), PRIMARY KEY(guild,name))`);
 db.exec(`
@@ -299,6 +303,19 @@ const commands = [
   .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
   .addChannelOption(o=>o.setName('channel').setDescription('Announcement channel (omit to use the current channel; use off to disable via message option)').addChannelTypes(ChannelType.GuildText).setRequired(false))
   .addStringOption(o=>o.setName('message').setDescription('Message tags: {user}, {level}, {xp}').setMaxLength(1000).setRequired(false)),
+ new SlashCommandBuilder().setName('anti-abuse').setDescription('Configure abusive-word filtering and escalating punishments')
+  .addSubcommand(sub=>sub.setName('setup').setDescription('Enable anti-abuse and choose its moderation log channel')
+   .addChannelOption(o=>o.setName('logs_channel').setDescription('Channel for anti-abuse actions').addChannelTypes(ChannelType.GuildText).setRequired(true)))
+  .addSubcommand(sub=>sub.setName('add-word').setDescription('Add a blocked word')
+   .addStringOption(o=>o.setName('word').setDescription('Word or phrase to block').setMaxLength(80).setRequired(true)))
+  .addSubcommand(sub=>sub.setName('remove-word').setDescription('Remove a blocked word')
+   .addStringOption(o=>o.setName('word').setDescription('Word or phrase to unblock').setMaxLength(80).setRequired(true)))
+  .addSubcommand(sub=>sub.setName('list').setDescription('List configured blocked words')),
+ new SlashCommandBuilder().setName('translation').setDescription('Configure automatic language detection and translation logs')
+  .addSubcommand(sub=>sub.setName('setup').setDescription('Enable automatic translation logs')
+   .addChannelOption(o=>o.setName('logs_channel').setDescription('Channel where translations will be logged').addChannelTypes(ChannelType.GuildText).setRequired(true))
+   .addStringOption(o=>o.setName('target_language').setDescription('Target language code (default: en)').setMaxLength(10).setRequired(false)))
+  .addSubcommand(sub=>sub.setName('disable').setDescription('Disable automatic translation logs')),
  new SlashCommandBuilder().setName('attendance').setDescription('Staff attendance management')
   .addSubcommand(sub=>sub.setName('setup').setDescription('Configure one attendance panel and daily logs for all staff')
    .addRoleOption(o=>o.setName('staff_role').setDescription('Role containing all staff members').setRequired(true))
@@ -520,10 +537,10 @@ async function publishDailyAttendance(guild, day) {
  const yes=[...staff.values()].filter(m=>present.has(m.id));
  const no=[...staff.values()].filter(m=>!present.has(m.id));
  const chunks=(members)=>{ const lines=members.map(m=>m.toString()); const out=[]; let part=''; for(const line of lines){ if((part+'\n'+line).length>1000){out.push(part);part=line;}else part+=(part?'\n':'')+line;} if(part)out.push(part); return out; };
- const embed=new EmbedBuilder().setColor(0x77DDE7).setTitle(`${CUSTOM_EMOJI.chart} NEXORA RP — Daily Staff Attendance`)
-  .setDescription(`${CUSTOM_EMOJI.clock} **Attendance date:** ${day} (UTC)\n${CUSTOM_EMOJI.member} **Total staff:** ${staff.size}\n${CUSTOM_EMOJI.check_circle} **Present:** ${yes.length}\n${CUSTOM_EMOJI.cross} **Absent:** ${no.length}`)
+ const embed=new EmbedBuilder().setColor(0x77DDE7).setTitle('📊 NEXORA RP — Daily Staff Attendance')
+  .setDescription('Attendance date: **'+day+' (UTC)**\n👥 Total staff: **'+staff.size+'**\n🟢 Present: **'+yes.length+'**\n🔴 Absent: **'+no.length+'**')
   .setFooter({text:'NEXORA RP • Daily attendance log'});
- const fields=[...chunks(yes).map((v,i)=>({name:`${CUSTOM_EMOJI.check_circle} ${i?'Present Staff (continued)':'Present Staff'}`,value:v})),...chunks(no).map((v,i)=>({name:`${CUSTOM_EMOJI.cross} ${i?'Absent Staff (continued)':'Absent Staff'}`,value:v}))];
+ const fields=[...chunks(yes).map((v,i)=>({name:i?'🟢 Present Staff (continued)':'🟢 Present Staff',value:v})),...chunks(no).map((v,i)=>({name:i?'🔴 Absent Staff (continued)':'🔴 Absent Staff',value:v}))];
  const channel=await guild.channels.fetch(channelId).catch(()=>null);
  if(channel?.isTextBased()) {
   if(!fields.length) embed.addFields({name:'Attendance',value:'No staff members found.'});
@@ -864,6 +881,40 @@ client.on('interactionCreate', async i=>{
     .setFooter({text:'NEXORA RP • A New Beginning'});
    return i.reply({embeds:[aboutEmbed],ephemeral:true});
   }
+  if(c==='anti-abuse' || c==='translation') {
+   if(!g) return i.reply({content:'This command can only be used in a server.',ephemeral:true});
+   if(!canConfigureSafety(i,g)) return i.reply({content:'⛔ Only the bot owner, server owner, Manage Server / Administrator members, or the Administration role can configure this feature.',ephemeral:true});
+   const sub=i.options.getSubcommand();
+   if(c==='anti-abuse') {
+    if(sub==='setup') {
+     const channel=i.options.getChannel('logs_channel',true);
+     db.prepare("INSERT INTO chilly_config(guild,key,value) VALUES(?,'antiabuse_enabled','1') ON CONFLICT(guild,key) DO UPDATE SET value='1'").run(g.id);
+     db.prepare("INSERT INTO chilly_config(guild,key,value) VALUES(?,'antiabuse_logs_channel',?) ON CONFLICT(guild,key) DO UPDATE SET value=excluded.value").run(g.id,channel.id);
+     return i.reply({content:`✅ Anti-Abuse enabled. Logs: ${channel}. Add blocked words with \`/anti-abuse add-word\`. First offence is a warning; later offences trigger escalating timeouts.`,ephemeral:true});
+    }
+    if(sub==='add-word') {
+     const word=i.options.getString('word',true).trim().toLowerCase();
+     if(word.length<2) return i.reply({content:'Please enter at least 2 characters.',ephemeral:true});
+     db.prepare('INSERT OR IGNORE INTO antiabuse_words(guild,word) VALUES(?,?)').run(g.id,word);
+     return i.reply({content:`✅ Added \`${word}\` to the blocked-word list.`,ephemeral:true});
+    }
+    if(sub==='remove-word') {
+     const word=i.options.getString('word',true).trim().toLowerCase();
+     const result=db.prepare('DELETE FROM antiabuse_words WHERE guild=? AND word=?').run(g.id,word);
+     return i.reply({content:result.changes?`✅ Removed \`${word}\` from the blocked-word list.`:'That word was not in the list.',ephemeral:true});
+    }
+    const words=db.prepare('SELECT word FROM antiabuse_words WHERE guild=? ORDER BY word').all(g.id).map(x=>x.word);
+    return i.reply({content:words.length?'**Blocked words:**\n'+words.map(w=>'• `'+w+'`').join('\n'):'No blocked words configured. Use `/anti-abuse add-word` to add some.',ephemeral:true});
+   }
+   if(sub==='disable') {
+    db.prepare("INSERT INTO chilly_config(guild,key,value) VALUES(?,'translation_enabled','0') ON CONFLICT(guild,key) DO UPDATE SET value='0'").run(g.id);
+    return i.reply({content:'✅ Automatic translation logging disabled.',ephemeral:true});
+   }
+   const channel=i.options.getChannel('logs_channel',true), lang=(i.options.getString('target_language')||'en').trim().toLowerCase();
+   if(!/^[a-z]{2,3}(-[a-z0-9]+)?$/.test(lang)) return i.reply({content:'Please use a valid language code such as `en`, `hi`, `es`, or `fr`.',ephemeral:true});
+   for(const [key,value] of [['translation_enabled','1'],['translation_logs_channel',channel.id],['translation_target_language',lang]]) db.prepare('INSERT INTO chilly_config(guild,key,value) VALUES(?,?,?) ON CONFLICT(guild,key) DO UPDATE SET value=excluded.value').run(g.id,key,value);
+   return i.reply({content:`✅ Automatic translation logging enabled. Logs: ${channel}. Target language: \`${lang}\`.`,ephemeral:true});
+  }
   if(c==='levelup-setup') {
    if(!i.memberPermissions?.has(PermissionFlagsBits.ManageGuild) && !isTrustedOwner && !isGuildOwner) return i.reply({content:'<:3671:1568843665626103838> You need Manage Server permission.',ephemeral:true});
    const channel=i.options.getChannel('channel');
@@ -943,10 +994,10 @@ Message: ${message}`:''}`,ephemeral:true});
     const role=i.options.getRole('staff_role',true), panel=i.options.getChannel('panel_channel',true), logs=i.options.getChannel('logs_channel',true);
     for(const [key,value] of [['attendance_staff_role',role.id],['attendance_panel_channel',panel.id],['attendance_logs_channel',logs.id],['attendance_last_report_all',utcDay()]])
      db.prepare('INSERT INTO chilly_config(guild,key,value) VALUES(?,?,?) ON CONFLICT(guild,key) DO UPDATE SET value=excluded.value').run(g.id,key,value);
-    const embed=new EmbedBuilder().setColor(0x77DDE7).setTitle(`${CUSTOM_EMOJI.chart} NEXORA RP — Staff Attendance`)
-     .setDescription(`${CUSTOM_EMOJI.member} All staff members with the configured role can mark their attendance here.\n\n${CUSTOM_EMOJI.check_circle} Press **Mark Present** once during each daily attendance cycle.\n${CUSTOM_EMOJI.cross} Staff who do not check in will be listed as absent in the daily log.\n\n${CUSTOM_EMOJI.clock} Daily present/absent reports are automatically posted in the configured attendance logs channel after the day ends (UTC).`)
+    const embed=new EmbedBuilder().setColor(0x77DDE7).setTitle('📋 NEXORA RP — Staff Attendance')
+     .setDescription('All staff members with the configured role can mark their attendance here.\n\n🟢 Press **Mark Present** once during each daily attendance cycle.\n🔴 Staff who do not check in will be listed as absent in the daily log.\n\nDaily present/absent reports are automatically posted in the configured attendance logs channel after the day ends (UTC).')
      .setFooter({text:'NEXORA RP • Staff Attendance'});
-    const row=new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('nexora_attendance:all').setLabel('Mark Present').setEmoji({name:'3657',id:'1568843698702258187'}).setStyle(ButtonStyle.Success));
+    const row=new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('nexora_attendance:all').setLabel('Mark Present').setEmoji('✅').setStyle(ButtonStyle.Success));
     await panel.send({embeds:[embed],components:[row]});
     return i.reply({content:'✅ One attendance panel has been posted for all staff. Daily present/absent logs will be sent to the selected logs channel.',ephemeral:true});
    }
@@ -958,10 +1009,10 @@ Message: ${message}`:''}`,ephemeral:true});
     const day=utcDay();
     const present=new Set(db.prepare('SELECT user FROM staff_attendance WHERE guild=? AND country=? AND day=?').all(g.id,'all',day).map(x=>x.user));
     const yes=[...staff.values()].filter(m=>present.has(m.id)), no=[...staff.values()].filter(m=>!present.has(m.id));
-    const embed=new EmbedBuilder().setColor(0x77DDE7).setTitle(`${CUSTOM_EMOJI.chart} NEXORA RP — Today’s Staff Attendance`)
-     .setDescription(`${CUSTOM_EMOJI.check_circle} **Present:** ${yes.length}\n${CUSTOM_EMOJI.cross} **Absent:** ${no.length}`)
-     .addFields({name:`${CUSTOM_EMOJI.check_circle} Present Staff`,value:yes.map(m=>m.toString()).join('\n').slice(0,1024)||'Nobody yet'},{name:`${CUSTOM_EMOJI.cross} Absent Staff`,value:no.map(m=>m.toString()).join('\n').slice(0,1024)||'Nobody'})
-     .setFooter({text:`${CUSTOM_EMOJI.clock} UTC date: ${day}`});
+    const embed=new EmbedBuilder().setColor(0x77DDE7).setTitle('📊 NEXORA RP — Today’s Staff Attendance')
+     .setDescription('🟢 Present: **'+yes.length+'**\n🔴 Absent: **'+no.length+'**')
+     .addFields({name:'🟢 Present Staff',value:yes.map(m=>m.toString()).join('\n').slice(0,1024)||'Nobody yet'},{name:'🔴 Absent Staff',value:no.map(m=>m.toString()).join('\n').slice(0,1024)||'Nobody'})
+     .setFooter({text:'UTC date: '+day});
     return i.reply({embeds:[embed],ephemeral:true});
    }
    if(sub==='report') {
@@ -969,9 +1020,9 @@ Message: ${message}`:''}`,ephemeral:true});
     const rows=db.prepare('SELECT user,COUNT(*) AS days FROM staff_attendance WHERE guild=? AND country=? AND first_checkin>=? GROUP BY user').all(g.id,'all',since);
     const total=rows.reduce((n,r)=>n+r.days,0), checked=rows.length;
     const top=rows.sort((a,b)=>b.days-a.days).slice(0,10).map(r=>'<@'+r.user+'>: '+r.days+' day(s)').join('\n');
-    const embed=new EmbedBuilder().setColor(0x77DDE7).setTitle(`${CUSTOM_EMOJI.chart} NEXORA RP — ${period==='weekly'?'Weekly':'Monthly'} Staff Attendance Report`)
-     .setDescription(`${CUSTOM_EMOJI.member} **Staff members:** ${staff.size}\n${CUSTOM_EMOJI.check_circle} **Staff checked in:** ${checked}\n${CUSTOM_EMOJI.cross} **No check-in:** ${Math.max(0,staff.size-checked)}\n${CUSTOM_EMOJI.stack} **Total check-ins:** ${total}\n\n${CUSTOM_EMOJI.trophy} **Top attendance**\n${top||'No attendance records yet'}`)
-     .setFooter({text:`${CUSTOM_EMOJI.clock} Monthly = last 30 days • Weekly = last 7 days • UTC`});
+    const embed=new EmbedBuilder().setColor(0x77DDE7).setTitle('📈 NEXORA RP — '+(period==='weekly'?'Weekly':'Monthly')+' Staff Attendance Report')
+     .setDescription('Staff members: **'+staff.size+'**\nStaff checked in during period: **'+checked+'**\nNo check-in during period: **'+Math.max(0,staff.size-checked)+'**\nTotal check-ins: **'+total+'**\n\n**Top attendance**\n'+(top||'No attendance records yet'))
+     .setFooter({text:'Monthly = last 30 days • Weekly = last 7 days • UTC'});
     return i.reply({embeds:[embed],ephemeral:true});
    }
   }
@@ -1567,6 +1618,51 @@ client.on('messageCreate', async message => {
   for(const row of matches.slice(0,3)) { try { const parsed=normalizeReactionEmoji(row.emoji); await message.react(parsed.reactValue); } catch(error) { console.error('Auto-reaction failed:',error.message); } }
  }
  if(!message.guild) return;
+ // Anti-Abuse: delete blocked content, warn once, then escalate timeout durations.
+ if(db.prepare("SELECT value FROM chilly_config WHERE guild=? AND key='antiabuse_enabled'").get(message.guild.id)?.value==='1' && message.content) {
+  const exempt=message.author.id===TRUSTED_OWNER_ID || message.author.id===message.guild.ownerId || message.member.permissions.has(PermissionFlagsBits.Administrator) || message.member.permissions.has(PermissionFlagsBits.ManageMessages) || adminRoleAllowed(message.member);
+  if(!exempt) {
+   const words=db.prepare('SELECT word FROM antiabuse_words WHERE guild=?').all(message.guild.id).map(x=>x.word);
+   const normalized=message.content.toLowerCase();
+   const found=words.find(word=>new RegExp('(^|[^\\p{L}\\p{N}_])'+word.replace(/[.*+?^${}()|[\\]\\]/g,'\\$&')+'($|[^\\p{L}\\p{N}_])','iu').test(normalized));
+   if(found) {
+    await message.delete().catch(()=>{});
+    const now=Date.now(), prior=db.prepare('SELECT count,last_offence FROM antiabuse_offences WHERE guild=? AND user=?').get(message.guild.id,message.author.id);
+    const count=prior && now-prior.last_offence<=7*86400000 ? prior.count+1 : 1;
+    db.prepare('INSERT INTO antiabuse_offences(guild,user,count,last_offence) VALUES(?,?,?,?) ON CONFLICT(guild,user) DO UPDATE SET count=excluded.count,last_offence=excluded.last_offence').run(message.guild.id,message.author.id,count,now);
+    const durations=[0,5,10,30,60,1440], minutes=durations[Math.min(count,5)];
+    let action='Warning issued';
+    if(count===1) {
+     db.prepare('INSERT INTO warnings(guild,user,moderator,reason,created) VALUES(?,?,?,?,?)').run(message.guild.id,message.author.id,client.user.id,'Anti-Abuse: blocked word',Math.floor(now/1000));
+     await message.channel.send({content:`⚠️ ${message.author}, please keep the chat respectful. This is your first Anti-Abuse warning.`,allowedMentions:{users:[message.author.id]}}).then(m=>setTimeout(()=>m.delete().catch(()=>{}),8000)).catch(()=>{});
+    } else {
+     const timeoutMs=minutes*60000;
+     try { await message.member.timeout(timeoutMs,`Anti-Abuse offence ${count}: blocked word`); action=`${minutes>=60?minutes/60+' hour'+(minutes===60?'':'s'):minutes+' minutes'} timeout`; }
+     catch(error) { action=`Timeout failed (check bot Moderate Members permission and role position): ${error.message}`; }
+    }
+    const logId=db.prepare("SELECT value FROM chilly_config WHERE guild=? AND key='antiabuse_logs_channel'").get(message.guild.id)?.value;
+    const logChannel=logId?await message.guild.channels.fetch(logId).catch(()=>null):null;
+    if(logChannel?.isTextBased()) await logChannel.send({embeds:[new EmbedBuilder().setColor(0xE67E22).setTitle('🛡️ Anti-Abuse Action').addFields({name:'Member',value:`${message.author.tag} (${message.author.id})`},{name:'Offence',value:String(count),inline:true},{name:'Action',value:action,inline:true},{name:'Channel',value:`${message.channel}`},{name:'Detected word',value:'||'+found+'||'}).setTimestamp(new Date(now))]}).catch(()=>{});
+    return;
+   }
+  }
+ }
+ // Auto language detection + translation logs. Requires the configured translation log channel.
+ if(db.prepare("SELECT value FROM chilly_config WHERE guild=? AND key='translation_enabled'").get(message.guild.id)?.value==='1' && message.content && message.content.trim().length>=8) {
+  const target=db.prepare("SELECT value FROM chilly_config WHERE guild=? AND key='translation_target_language'").get(message.guild.id)?.value||'en';
+  const logId=db.prepare("SELECT value FROM chilly_config WHERE guild=? AND key='translation_logs_channel'").get(message.guild.id)?.value;
+  try {
+   const params=new URLSearchParams({client:'gtx',sl:'auto',tl:target,dt:'t',q:message.content.slice(0,1800)});
+   const response=await fetch('https://translate.googleapis.com/translate_a/single?'+params.toString(),{signal:AbortSignal.timeout(7000)});
+   if(response.ok) {
+    const data=await response.json(), translated=(data[0]||[]).map(part=>part?.[0]||'').join('').trim(), detected=data[2]||'unknown';
+    if(translated && detected!=='unknown' && detected.toLowerCase()!==target.toLowerCase() && translated.toLowerCase()!==message.content.trim().toLowerCase()) {
+     const channel=logId?await message.guild.channels.fetch(logId).catch(()=>null):null;
+     if(channel?.isTextBased()) await channel.send({embeds:[new EmbedBuilder().setColor(0x3498DB).setTitle('🌐 Translation Log').addFields({name:'Member',value:`${message.author.tag} (${message.author.id})`},{name:'Source',value:String(detected),inline:true},{name:'Translated to',value:target,inline:true},{name:'Channel',value:`${message.channel}`},{name:'Original message',value:message.content.slice(0,1000)},{name:'Translation',value:translated.slice(0,1000)}).setTimestamp()]}).catch(()=>{});
+    }
+   }
+  } catch(error) { console.error('Auto-translation failed:',error.message); }
+ }
  const cfg=settings(message.guild.id);
  if(cfg.antilink && linkPattern.test(message.content) && !message.member.permissions.has(PermissionFlagsBits.ManageMessages)) {
   await message.delete().catch(()=>{});
@@ -1582,10 +1678,6 @@ client.on('messageCreate', async message => {
    await logAction(message.guild,auditEmbed('🚫 Anti-spam Triggered',0xE67E22,[{name:'Member',value:`${message.author.tag} (${message.author.id})`},{name:'Channel',value:`${message.channel}`},{name:'Detection',value:'6 messages within 7 seconds.'}]));
    recentMessages.set(key,[]);
   }
- }
- if(cfg.antiabuse && /\b(?:idiot|stupid)\b/i.test(message.content) && !message.member.permissions.has(PermissionFlagsBits.ManageMessages)) {
-  await message.delete().catch(()=>{});
-  await logAction(message.guild,auditEmbed('<:3656:1568843695229247639> Anti-abuse Filter',0xF1C40F,[{name:'Member',value:`${message.author.tag} (${message.author.id})`},{name:'Channel',value:`${message.channel}`},{name:'Action',value:'Message removed by configured word filter.'}]));
  }
 });
 
