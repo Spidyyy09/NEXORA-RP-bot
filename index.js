@@ -526,7 +526,9 @@ const recentMessages = new Map();
 const recentJoins = new Map();
 const actionCounts = new Map();
 const linkPattern = /https?:\/\/|discord\.gg\//i;
-const utcDay = (time=Date.now()) => new Date(time).toISOString().slice(0,10);
+const istParts = (time=Date.now()) => { const parts=new Intl.DateTimeFormat('en-GB',{timeZone:'Asia/Kolkata',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).formatToParts(new Date(time)); return Object.fromEntries(parts.map(p=>[p.type,p.value])); };
+const istDay = (time=Date.now()) => { const p=istParts(time); return `${p.year}-${p.month}-${p.day}`; };
+const attendanceIsOpen = (time=Date.now()) => { const p=istParts(time); const mins=Number(p.hour)*60+Number(p.minute); return mins>=7*60 && mins<22*60; };
 async function publishDailyAttendance(guild, day) {
  const roleId=db.prepare('SELECT value FROM chilly_config WHERE guild=? AND key=?').get(guild.id,'attendance_staff_role')?.value;
  const channelId=db.prepare('SELECT value FROM chilly_config WHERE guild=? AND key=?').get(guild.id,'attendance_logs_channel')?.value;
@@ -538,7 +540,7 @@ async function publishDailyAttendance(guild, day) {
  const no=[...staff.values()].filter(m=>!present.has(m.id));
  const chunks=(members)=>{ const lines=members.map(m=>m.toString()); const out=[]; let part=''; for(const line of lines){ if((part+'\n'+line).length>1000){out.push(part);part=line;}else part+=(part?'\n':'')+line;} if(part)out.push(part); return out; };
  const embed=new EmbedBuilder().setColor(0x77DDE7).setTitle('📊 NEXORA RP — Daily Staff Attendance')
-  .setDescription('Attendance date: **'+day+' (UTC)**\n👥 Total staff: **'+staff.size+'**\n🟢 Present: **'+yes.length+'**\n🔴 Absent: **'+no.length+'**')
+  .setDescription('Attendance date: **'+day+' (IST)**\n👥 Total staff: **'+staff.size+'**\n🟢 Present: **'+yes.length+'**\n🔴 Absent: **'+no.length+'**')
   .setFooter({text:'NEXORA RP • Daily attendance log'});
  const fields=[...chunks(yes).map((v,i)=>({name:i?'🟢 Present Staff (continued)':'🟢 Present Staff',value:v})),...chunks(no).map((v,i)=>({name:i?'🔴 Absent Staff (continued)':'🔴 Absent Staff',value:v}))];
  const channel=await guild.channels.fetch(channelId).catch(()=>null);
@@ -549,21 +551,18 @@ async function publishDailyAttendance(guild, day) {
  }
 }
 async function checkAttendanceDayRollover() {
- const today=utcDay();
+ const now=Date.now(), today=istDay(now), parts=istParts(now), hour=Number(parts.hour);
+ if(hour<22) return;
  for(const guild of client.guilds.cache.values()) {
   const channelId=db.prepare('SELECT value FROM chilly_config WHERE guild=? AND key=?').get(guild.id,'attendance_logs_channel')?.value;
   if(!channelId) continue;
   const key='attendance_last_report_all';
-  const previous=db.prepare('SELECT value FROM chilly_config WHERE guild=? AND key=?').get(guild.id,key)?.value;
-  if(!previous) {
+  const last=db.prepare('SELECT value FROM chilly_config WHERE guild=? AND key=?').get(guild.id,key)?.value;
+  if(last===today) continue;
+  try {
+   await publishDailyAttendance(guild,today);
    db.prepare('INSERT INTO chilly_config(guild,key,value) VALUES(?,?,?) ON CONFLICT(guild,key) DO UPDATE SET value=excluded.value').run(guild.id,key,today);
-   continue;
-  }
-  if(previous!==today) {
-   try { await publishDailyAttendance(guild,previous); }
-   catch(error) { console.error('Daily attendance report failed:',guild.id,error.message); }
-   db.prepare('INSERT INTO chilly_config(guild,key,value) VALUES(?,?,?) ON CONFLICT(guild,key) DO UPDATE SET value=excluded.value').run(guild.id,key,today);
-  }
+  } catch(error) { console.error('Daily attendance report failed:',guild.id,error.message); }
  }
 }
 
@@ -697,7 +696,8 @@ client.on('interactionCreate', async i=>{
    if(!roleId) return i.reply({content:'Attendance is not configured yet.',ephemeral:true});
    const member=await i.guild.members.fetch(i.user.id).catch(()=>null);
    if(!member?.roles.cache.has(roleId)) return i.reply({content:'Only members with the configured staff role can mark attendance.',ephemeral:true});
-   const day=utcDay();
+   if(!attendanceIsOpen()) return i.reply({content:'⏰ Attendance is closed. It is open daily from **7:00 AM to 10:00 PM IST**.',ephemeral:true});
+   const day=istDay();
    const result=db.prepare('INSERT OR IGNORE INTO staff_attendance(guild,country,user,day,first_checkin) VALUES(?,?,?,?,?)').run(i.guildId,'all',i.user.id,day,Date.now());
    return i.reply({content:result.changes?'✅ Your attendance has been marked **PRESENT** for today.':'You have already marked attendance today.',ephemeral:true});
   }
@@ -992,27 +992,27 @@ Message: ${message}`:''}`,ephemeral:true});
    const sub=i.options.getSubcommand();
    if(sub==='setup') {
     const role=i.options.getRole('staff_role',true), panel=i.options.getChannel('panel_channel',true), logs=i.options.getChannel('logs_channel',true);
-    for(const [key,value] of [['attendance_staff_role',role.id],['attendance_panel_channel',panel.id],['attendance_logs_channel',logs.id],['attendance_last_report_all',utcDay()]])
+    for(const [key,value] of [['attendance_staff_role',role.id],['attendance_panel_channel',panel.id],['attendance_logs_channel',logs.id],['attendance_last_report_all','']])
      db.prepare('INSERT INTO chilly_config(guild,key,value) VALUES(?,?,?) ON CONFLICT(guild,key) DO UPDATE SET value=excluded.value').run(g.id,key,value);
     const embed=new EmbedBuilder().setColor(0x77DDE7).setTitle('📋 NEXORA RP — Staff Attendance')
-     .setDescription('All staff members with the configured role can mark their attendance here.\n\n🟢 Press **Mark Present** once during each daily attendance cycle.\n🔴 Staff who do not check in will be listed as absent in the daily log.\n\nDaily present/absent reports are automatically posted in the configured attendance logs channel after the day ends (UTC).')
+     .setDescription(`All staff members with the configured role can mark their attendance here.\n\n🟢 Press **Mark Present** once during each daily attendance cycle.\n🔴 Staff who do not check in will be listed as absent in the daily log.\n\nAttendance opens daily at **7:00 AM IST** and closes at **10:00 PM IST**. The same day's present/absent report is posted in the configured logs channel at **10:00 PM IST**.`)
      .setFooter({text:'NEXORA RP • Staff Attendance'});
     const row=new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('nexora_attendance:all').setLabel('Mark Present').setEmoji('✅').setStyle(ButtonStyle.Success));
     await panel.send({embeds:[embed],components:[row]});
-    return i.reply({content:'✅ One attendance panel has been posted for all staff. Daily present/absent logs will be sent to the selected logs channel.',ephemeral:true});
+    return i.reply({content:'✅ One attendance panel has been posted for all staff. Daily attendance opens at 7:00 AM IST, closes at 10:00 PM IST, and the same-day result is posted at 10:00 PM IST in the selected logs channel.',ephemeral:true});
    }
    const roleId=db.prepare('SELECT value FROM chilly_config WHERE guild=? AND key=?').get(g.id,'attendance_staff_role')?.value;
    if(!roleId) return i.reply({content:'Run `/attendance setup` first.',ephemeral:true});
    await g.members.fetch();
    const staff=g.members.cache.filter(m=>m.roles.cache.has(roleId)&&!m.user.bot);
    if(sub==='status') {
-    const day=utcDay();
+    const day=istDay();
     const present=new Set(db.prepare('SELECT user FROM staff_attendance WHERE guild=? AND country=? AND day=?').all(g.id,'all',day).map(x=>x.user));
     const yes=[...staff.values()].filter(m=>present.has(m.id)), no=[...staff.values()].filter(m=>!present.has(m.id));
     const embed=new EmbedBuilder().setColor(0x77DDE7).setTitle('📊 NEXORA RP — Today’s Staff Attendance')
      .setDescription('🟢 Present: **'+yes.length+'**\n🔴 Absent: **'+no.length+'**')
      .addFields({name:'🟢 Present Staff',value:yes.map(m=>m.toString()).join('\n').slice(0,1024)||'Nobody yet'},{name:'🔴 Absent Staff',value:no.map(m=>m.toString()).join('\n').slice(0,1024)||'Nobody'})
-     .setFooter({text:'UTC date: '+day});
+     .setFooter({text:'IST date: '+day});
     return i.reply({embeds:[embed],ephemeral:true});
    }
    if(sub==='report') {
@@ -1022,7 +1022,7 @@ Message: ${message}`:''}`,ephemeral:true});
     const top=rows.sort((a,b)=>b.days-a.days).slice(0,10).map(r=>'<@'+r.user+'>: '+r.days+' day(s)').join('\n');
     const embed=new EmbedBuilder().setColor(0x77DDE7).setTitle('📈 NEXORA RP — '+(period==='weekly'?'Weekly':'Monthly')+' Staff Attendance Report')
      .setDescription('Staff members: **'+staff.size+'**\nStaff checked in during period: **'+checked+'**\nNo check-in during period: **'+Math.max(0,staff.size-checked)+'**\nTotal check-ins: **'+total+'**\n\n**Top attendance**\n'+(top||'No attendance records yet'))
-     .setFooter({text:'Monthly = last 30 days • Weekly = last 7 days • UTC'});
+     .setFooter({text:'Monthly = last 30 days • Weekly = last 7 days • IST'});
     return i.reply({embeds:[embed],ephemeral:true});
    }
   }
